@@ -5,6 +5,7 @@ import { Providers } from "./providers";
 export const metadata: Metadata = {
   title: "Gini",
   description: "AI Assistant System",
+  viewport: { width: "device-width", initialScale: 1, maximumScale: 1 },
 };
 
 export default function RootLayout({

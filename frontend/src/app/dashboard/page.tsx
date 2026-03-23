@@ -63,7 +63,7 @@ export default function DashboardPage() {
         </button>
       </div>
 
-      <div className="p-6 space-y-6 max-w-6xl mx-auto w-full">
+      <div className="p-3 pt-14 md:p-6 md:pt-6 space-y-6 max-w-6xl mx-auto w-full">
         {/* Cost Summary */}
         <section>
           <h2 className="text-sm font-medium text-zinc-400 mb-3">Overview</h2>

@@ -109,7 +109,7 @@ export default function MemoriesPage() {
         </div>
       </div>
 
-      <div className="p-6 space-y-4 max-w-4xl mx-auto w-full">
+      <div className="p-3 pt-14 md:p-6 md:pt-6 space-y-4 max-w-4xl mx-auto w-full">
         {/* Search Bar */}
         <div className="flex gap-2">
           <div className="flex-1 relative">

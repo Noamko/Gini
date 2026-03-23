@@ -68,7 +68,7 @@ export function ChatPanel() {
 
   return (
     <div className="flex-1 flex flex-col">
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-2 md:px-4 pt-12 md:pt-0">
         <div className="max-w-3xl mx-auto py-4">
           {messages.length === 0 && (
             <div className="flex items-center justify-center h-32 text-sm text-zinc-500">

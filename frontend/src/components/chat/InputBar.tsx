@@ -37,7 +37,7 @@ export function InputBar() {
   }, [input]);
 
   return (
-    <div className="border-t border-zinc-800 p-4">
+    <div className="border-t border-zinc-800 p-2 md:p-4">
       <div className="flex items-end gap-2 max-w-3xl mx-auto">
         <textarea
           ref={textareaRef}

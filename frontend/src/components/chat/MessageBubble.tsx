@@ -24,14 +24,14 @@ export function MessageBubble({ role, content, isStreaming, model, tokens, cost,
   const isUser = role === "user";
 
   return (
-    <div className={cn("flex gap-3 py-4", isUser ? "justify-end" : "justify-start")}>
+    <div className={cn("flex gap-2 md:gap-3 py-3 md:py-4", isUser ? "justify-end" : "justify-start")}>
       {!isUser && (
-        <div className="shrink-0 w-8 h-8 rounded-full bg-violet-600 flex items-center justify-center">
-          <Bot size={16} />
+        <div className="shrink-0 w-7 h-7 md:w-8 md:h-8 rounded-full bg-violet-600 flex items-center justify-center">
+          <Bot size={14} />
         </div>
       )}
 
-      <div className={cn("max-w-[75%] space-y-1", isUser && "order-first")}>
+      <div className={cn("max-w-[90%] md:max-w-[75%] space-y-1", isUser && "order-first")}>
         <div
           className={cn(
             "rounded-2xl px-4 py-2.5 text-sm leading-relaxed",

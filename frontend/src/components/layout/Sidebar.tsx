@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Plus, MessageSquare, Trash2, Bot, Settings, Zap, LayoutDashboard, Brain, Activity, Sun, Moon, Play, CalendarClock, Webhook, GitBranch } from "lucide-react";
+import { Plus, MessageSquare, Trash2, Bot, Settings, Zap, LayoutDashboard, Brain, Activity, Sun, Moon, Play, CalendarClock, Webhook, GitBranch, Menu, X } from "lucide-react";
 import { useChatStore } from "@/stores/chatStore";
 import { useTheme } from "@/components/layout/ThemeProvider";
 import { cn } from "@/lib/utils";
@@ -27,16 +27,17 @@ function ThemeToggle() {
   return (
     <button
       onClick={toggleTheme}
-      className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
+      className="p-2 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
       title={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
     >
-      {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
+      {theme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
     </button>
   );
 }
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [open, setOpen] = useState(false);
   const {
     conversations,
     activeConversationId,
@@ -51,15 +52,21 @@ export function Sidebar() {
     loadConversations();
   }, [loadConversations]);
 
+  // Close sidebar on navigation (mobile)
+  useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
+
   const handleNew = async () => {
     const id = await createConversation();
     selectConversation(id);
+    setOpen(false);
   };
 
   const isChat = pathname?.startsWith("/chat");
 
-  return (
-    <aside className="w-64 bg-zinc-900 border-r border-zinc-800 flex flex-col h-full">
+  const sidebarContent = (
+    <>
       {/* Navigation */}
       <div className="p-2 border-b border-zinc-800 space-y-0.5">
         {NAV_ITEMS.map(({ href, label, icon: Icon }) => (
@@ -67,7 +74,7 @@ export function Sidebar() {
             key={href}
             href={href}
             className={cn(
-              "flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors",
+              "flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-colors",
               pathname?.startsWith(href)
                 ? "bg-zinc-800 text-zinc-100"
                 : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200"
@@ -84,7 +91,7 @@ export function Sidebar() {
         <div className="p-3 border-b border-zinc-800">
           <button
             onClick={handleNew}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm transition-colors"
+            className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm transition-colors"
           >
             <Plus size={16} />
             New Chat
@@ -102,12 +109,12 @@ export function Sidebar() {
             <div
               key={conv.id}
               className={cn(
-                "group flex items-center gap-2 px-3 py-2 rounded-lg text-sm cursor-pointer transition-colors",
+                "group flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm cursor-pointer transition-colors",
                 activeConversationId === conv.id
                   ? "bg-zinc-800 text-zinc-100"
                   : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200"
               )}
-              onClick={() => selectConversation(conv.id)}
+              onClick={() => { selectConversation(conv.id); setOpen(false); }}
             >
               <MessageSquare size={14} className="shrink-0" />
               <span className="truncate flex-1">{conv.title || "Untitled"}</span>
@@ -137,6 +144,44 @@ export function Sidebar() {
           <ThemeToggle />
         </div>
       </div>
-    </aside>
+    </>
+  );
+
+  return (
+    <>
+      {/* Mobile hamburger button */}
+      <button
+        onClick={() => setOpen(true)}
+        className="md:hidden fixed top-3 left-3 z-40 p-2 rounded-lg bg-zinc-900 border border-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors"
+      >
+        <Menu size={20} />
+      </button>
+
+      {/* Mobile overlay */}
+      {open && (
+        <div className="md:hidden fixed inset-0 z-50 bg-black/60" onClick={() => setOpen(false)} />
+      )}
+
+      {/* Sidebar — drawer on mobile, fixed on desktop */}
+      <aside
+        className={cn(
+          "bg-zinc-900 border-r border-zinc-800 flex flex-col h-full z-50",
+          // Desktop: always visible
+          "hidden md:flex md:w-64 md:shrink-0",
+          // Mobile: slide-in drawer
+          open && "!flex fixed inset-y-0 left-0 w-72 shadow-2xl",
+        )}
+      >
+        {/* Close button (mobile only) */}
+        <div className="md:hidden flex items-center justify-between p-3 border-b border-zinc-800">
+          <span className="text-sm font-semibold text-zinc-300">Gini</span>
+          <button onClick={() => setOpen(false)} className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-100">
+            <X size={18} />
+          </button>
+        </div>
+
+        {sidebarContent}
+      </aside>
+    </>
   );
 }

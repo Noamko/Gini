@@ -146,7 +146,7 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <div className="p-6 max-w-4xl mx-auto space-y-8">
+        <div className="p-3 pt-14 md:p-6 md:pt-6 max-w-4xl mx-auto space-y-8">
           {/* App Configuration */}
           <section className="space-y-4">
             <h2 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">LLM Defaults</h2>
