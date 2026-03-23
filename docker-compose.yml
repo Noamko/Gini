@@ -1,0 +1,81 @@
+services:
+
+  gini-db:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${DB_USER:-gini}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-gini_dev_password}
+      POSTGRES_DB: ${DB_NAME:-gini}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-gini}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  gini-redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  gini-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${DB_USER:-gini}:${DB_PASSWORD:-gini_dev_password}@gini-db:5432/${DB_NAME:-gini}
+      REDIS_URL: redis://gini-redis:6379/0
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+    volumes:
+      - ./settings.yaml:/app/settings.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      gini-db:
+        condition: service_healthy
+      gini-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  gini-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_WS_URL: ws://localhost:8000
+    depends_on:
+      gini-backend:
+        condition: service_healthy
+
+networks:
+  default:
+    # Internal network for services
+  sandbox:
+    # Sandbox network — internet access, no access to internal services
+    driver: bridge
+    internal: false
+
+volumes:
+  pgdata:
+  redisdata:

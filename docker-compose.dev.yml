@@ -1,0 +1,23 @@
+services:
+
+  gini-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./backend/app:/app/app:rw
+      - ./backend/scripts:/app/scripts:rw
+      - ./backend/alembic:/app/alembic:rw
+      - ./settings.yaml:/app/settings.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app --log-level info --timeout-graceful-shutdown 5
+
+  gini-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./frontend/src:/app/src:rw
+      - ./frontend/public:/app/public:rw
+    environment:
+      NODE_ENV: development

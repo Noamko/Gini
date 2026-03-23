@@ -1,0 +1,13 @@
+app:
+  name: Gini
+  version: 0.1.0
+  debug: true
+
+defaults:
+  llm_provider: anthropic
+  llm_model: claude-sonnet-4-20250514
+  temperature: 0.7
+  max_tokens: 4096
+
+ui:
+  theme: dark

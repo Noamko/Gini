@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+/* Light theme overrides */
+html.light {
+  color-scheme: light;
+}
+
+html.light body {
+  @apply bg-white text-zinc-900;
+}
+
+html.light .bg-zinc-950 {
+  @apply bg-white;
+}
+
+html.light .bg-zinc-900 {
+  @apply bg-zinc-50;
+}
+
+html.light .bg-zinc-900\/50 {
+  background-color: rgb(250 250 250 / 0.5);
+}
+
+html.light .bg-zinc-800 {
+  @apply bg-zinc-100;
+}
+
+html.light .bg-zinc-800\/50 {
+  background-color: rgb(244 244 245 / 0.5);
+}
+
+html.light .border-zinc-800 {
+  @apply border-zinc-200;
+}
+
+html.light .border-zinc-800\/50 {
+  border-color: rgb(228 228 231 / 0.5);
+}
+
+html.light .text-zinc-100 {
+  @apply text-zinc-900;
+}
+
+html.light .text-zinc-200 {
+  @apply text-zinc-800;
+}
+
+html.light .text-zinc-300 {
+  @apply text-zinc-700;
+}
+
+html.light .text-zinc-400 {
+  @apply text-zinc-500;
+}
+
+html.light .text-zinc-500 {
+  @apply text-zinc-500;
+}
+
+html.light .text-zinc-600 {
+  @apply text-zinc-400;
+}

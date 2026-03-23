@@ -1,0 +1,32 @@
+from fastapi import APIRouter
+
+from app.api.health import router as health_router
+from app.api.conversations import router as conversations_router
+from app.api.chat import router as chat_router
+from app.api.agents import router as agents_router
+from app.api.tools import router as tools_router
+from app.api.events import router as events_router
+from app.api.skills import router as skills_router
+from app.api.credentials import router as credentials_router
+from app.api.dashboard import router as dashboard_router
+from app.api.memories import router as memories_router
+from app.api.execution_logs import router as traces_router
+from app.api.settings_api import router as settings_router
+from app.api.models import router as models_router
+from app.api.runs import router as runs_router
+
+root_router = APIRouter()
+root_router.include_router(health_router)
+root_router.include_router(conversations_router)
+root_router.include_router(chat_router)
+root_router.include_router(agents_router)
+root_router.include_router(tools_router)
+root_router.include_router(events_router)
+root_router.include_router(skills_router)
+root_router.include_router(credentials_router)
+root_router.include_router(dashboard_router)
+root_router.include_router(memories_router)
+root_router.include_router(traces_router)
+root_router.include_router(settings_router)
+root_router.include_router(models_router)
+root_router.include_router(runs_router)
