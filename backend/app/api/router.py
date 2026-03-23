@@ -18,6 +18,7 @@ from app.api.schedules import router as schedules_router
 from app.api.webhooks import router as webhooks_router
 from app.api.workflows import router as workflows_router
 from app.api.templates import router as templates_router
+from app.api.backup import router as backup_router
 
 root_router = APIRouter()
 root_router.include_router(health_router)
@@ -38,3 +39,4 @@ root_router.include_router(schedules_router)
 root_router.include_router(webhooks_router)
 root_router.include_router(workflows_router)
 root_router.include_router(templates_router)
+root_router.include_router(backup_router)

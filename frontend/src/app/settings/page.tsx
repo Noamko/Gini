@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { api } from "@/lib/api-client";
-import { Plus, Pencil, Trash2, KeyRound, Eye, EyeOff, Settings, CheckCircle, XCircle, Save, RefreshCw } from "lucide-react";
+import { Plus, Pencil, Trash2, KeyRound, Eye, EyeOff, Settings, CheckCircle, XCircle, Save, RefreshCw, Download, Upload } from "lucide-react";
 
 interface Credential {
   id: string;
@@ -367,6 +367,66 @@ export default function SettingsPage() {
                 ))}
               </div>
             )}
+          </section>
+
+          {/* Backup & Restore */}
+          <section className="space-y-4">
+            <h2 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">Backup & Restore</h2>
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6 space-y-4">
+              <p className="text-xs text-zinc-500">
+                Export all agents, skills, credentials, workflows, schedules, and webhooks as a JSON file.
+                Restore imports everything back, matching by name (upsert).
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={async () => {
+                    try {
+                      const data = await api.backup.export();
+                      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement("a");
+                      a.href = url;
+                      a.download = `gini-backup-${new Date().toISOString().slice(0, 10)}.json`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    } catch (e: any) {
+                      alert(`Export failed: ${e.message}`);
+                    }
+                  }}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-sm transition-colors"
+                >
+                  <Download size={14} />
+                  Export Backup
+                </button>
+                <label className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm transition-colors cursor-pointer">
+                  <Upload size={14} />
+                  Restore from File
+                  <input
+                    type="file"
+                    accept=".json"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (!confirm("This will import/overwrite config data. Continue?")) {
+                        e.target.value = "";
+                        return;
+                      }
+                      try {
+                        const text = await file.text();
+                        const data = JSON.parse(text);
+                        const result = await api.backup.restore(data);
+                        alert(`Restore complete!\n${JSON.stringify(result.counts, null, 2)}`);
+                        window.location.reload();
+                      } catch (err: any) {
+                        alert(`Restore failed: ${err.message}`);
+                      }
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+              </div>
+            </div>
           </section>
         </div>
       </main>

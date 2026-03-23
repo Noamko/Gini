@@ -111,6 +111,11 @@ export const api = {
         `/api/models${refresh ? "?refresh=true" : ""}`
       ),
   },
+  backup: {
+    export: () => request<any>("/api/backup/export"),
+    restore: (data: any) =>
+      request<any>("/api/backup/restore", { method: "POST", body: JSON.stringify(data) }),
+  },
   templates: {
     list: () => request<{ items: any[] }>("/api/templates"),
   },
