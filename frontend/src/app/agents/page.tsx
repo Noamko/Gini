@@ -7,7 +7,7 @@ import { AgentCard } from "@/components/agents/AgentCard";
 import { AgentForm } from "@/components/agents/AgentForm";
 import { RunAgentDialog } from "@/components/agents/RunAgentDialog";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { Plus } from "lucide-react";
+import { Plus, Layers } from "lucide-react";
 import { api } from "@/lib/api-client";
 import type { Agent } from "@/lib/types";
 
@@ -16,6 +16,8 @@ export default function AgentsPage() {
     useAgentStore();
   const [showForm, setShowForm] = useState(false);
   const [runAgent, setRunAgent] = useState<Agent | null>(null);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [templates, setTemplates] = useState<any[]>([]);
   const router = useRouter();
 
   useEffect(() => {
@@ -39,6 +41,17 @@ export default function AgentsPage() {
     }
   };
 
+  const handleShowTemplates = async () => {
+    const data = await api.templates.list();
+    setTemplates(data.items);
+    setShowTemplates(true);
+  };
+
+  const handleDeployTemplate = async (template: any) => {
+    await createAgent(template.config);
+    setShowTemplates(false);
+  };
+
   const handleRunAgent = async (agent: Agent, instructions: string) => {
     await api.runs.create({
       agent_id: agent.id,
@@ -60,16 +73,17 @@ export default function AgentsPage() {
                 Create and manage specialized AI agents
               </p>
             </div>
-            <button
-              onClick={() => {
-                setEditingAgent(null);
-                setShowForm(true);
-              }}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-sm transition-colors"
-            >
-              <Plus size={16} />
-              New Agent
-            </button>
+            <div className="flex gap-2">
+              <button onClick={handleShowTemplates}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-sm transition-colors">
+                <Layers size={16} /> From Template
+              </button>
+              <button
+                onClick={() => { setEditingAgent(null); setShowForm(true); }}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-sm transition-colors">
+                <Plus size={16} /> New Agent
+              </button>
+            </div>
           </div>
 
           {(showForm || editingAgent) && (
@@ -104,6 +118,26 @@ export default function AgentsPage() {
           )}
         </div>
       </main>
+
+      {showTemplates && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl w-full max-w-lg mx-4 shadow-2xl">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800">
+              <h2 className="text-sm font-semibold">Deploy from Template</h2>
+              <button onClick={() => setShowTemplates(false)} className="text-zinc-400 hover:text-zinc-200 text-sm">Cancel</button>
+            </div>
+            <div className="p-4 space-y-2 max-h-96 overflow-y-auto">
+              {templates.map((t) => (
+                <button key={t.id} onClick={() => handleDeployTemplate(t)}
+                  className="w-full text-left bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 rounded-lg p-3 transition-colors">
+                  <div className="text-sm font-medium">{t.name}</div>
+                  <div className="text-xs text-zinc-400 mt-0.5">{t.description}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {runAgent && (
         <RunAgentDialog

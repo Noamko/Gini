@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Brain, Search, Plus, Trash2, X } from "lucide-react";
+import { Brain, Search, Plus, Trash2, X, Upload } from "lucide-react";
 import { api } from "@/lib/api-client";
 
 interface Memory {
@@ -76,13 +76,37 @@ export default function MemoriesPage() {
           <h1 className="text-lg font-semibold text-zinc-100">Memories</h1>
           <span className="text-xs text-zinc-500 ml-2">{total} stored</span>
         </div>
-        <button
-          onClick={() => setShowCreate(!showCreate)}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-violet-600 hover:bg-violet-500 text-white rounded-lg transition-colors"
-        >
-          <Plus size={12} />
-          Add Memory
-        </button>
+        <div className="flex gap-2">
+          <label className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg transition-colors cursor-pointer">
+            <Upload size={12} />
+            Upload File
+            <input type="file" className="hidden" accept=".txt,.md,.csv,.json"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const formData = new FormData();
+                formData.append("file", file);
+                formData.append("source", "document");
+                const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/api/memories/upload`, {
+                  method: "POST", body: formData,
+                });
+                if (res.ok) {
+                  const data = await res.json();
+                  alert(`Uploaded: ${data.chunks} chunks from ${data.filename}`);
+                  load();
+                }
+                e.target.value = "";
+              }}
+            />
+          </label>
+          <button
+            onClick={() => setShowCreate(!showCreate)}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-violet-600 hover:bg-violet-500 text-white rounded-lg transition-colors"
+          >
+            <Plus size={12} />
+            Add Memory
+          </button>
+        </div>
       </div>
 
       <div className="p-6 space-y-4 max-w-4xl mx-auto w-full">

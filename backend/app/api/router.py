@@ -14,6 +14,10 @@ from app.api.execution_logs import router as traces_router
 from app.api.settings_api import router as settings_router
 from app.api.models import router as models_router
 from app.api.runs import router as runs_router
+from app.api.schedules import router as schedules_router
+from app.api.webhooks import router as webhooks_router
+from app.api.workflows import router as workflows_router
+from app.api.templates import router as templates_router
 
 root_router = APIRouter()
 root_router.include_router(health_router)
@@ -30,3 +34,7 @@ root_router.include_router(traces_router)
 root_router.include_router(settings_router)
 root_router.include_router(models_router)
 root_router.include_router(runs_router)
+root_router.include_router(schedules_router)
+root_router.include_router(webhooks_router)
+root_router.include_router(workflows_router)
+root_router.include_router(templates_router)

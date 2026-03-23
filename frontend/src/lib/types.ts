@@ -11,6 +11,7 @@ export interface Agent {
   is_main: boolean;
   is_active: boolean;
   auto_approve: boolean;
+  daily_budget_usd: number | null;
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;

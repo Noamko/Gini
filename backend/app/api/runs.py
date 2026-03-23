@@ -71,11 +71,33 @@ async def get_run(run_id: UUID, db: AsyncSession = Depends(get_db)):
     return AgentRunResponse.from_orm_model(run)
 
 
+async def check_budget(agent: Agent, db: AsyncSession) -> str | None:
+    """Check if agent has exceeded daily budget. Returns error message or None."""
+    if agent.daily_budget_usd is None:
+        return None
+    from datetime import datetime, timezone, timedelta
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    result = await db.execute(
+        select(func.coalesce(func.sum(AgentRun.cost_usd), 0))
+        .where(AgentRun.agent_id == agent.id)
+        .where(AgentRun.created_at >= today_start)
+    )
+    spent = float(result.scalar_one())
+    if spent >= agent.daily_budget_usd:
+        return f"Daily budget exceeded: ${spent:.4f} / ${agent.daily_budget_usd:.2f}"
+    return None
+
+
 @router.post("", status_code=201)
 async def create_run(body: AgentRunCreate, db: AsyncSession = Depends(get_db)):
     agent = await db.get(Agent, body.agent_id)
     if not agent:
         raise HTTPException(404, "Agent not found")
+
+    # Check budget
+    budget_error = await check_budget(agent, db)
+    if budget_error:
+        raise HTTPException(429, budget_error)
 
     run = AgentRun(
         agent_id=body.agent_id,
@@ -92,6 +114,32 @@ async def create_run(body: AgentRunCreate, db: AsyncSession = Depends(get_db)):
     asyncio.create_task(_execute_run(str(run.id), str(agent.id)))
 
     return response
+
+
+@router.post("/{run_id}/retry", status_code=201)
+async def retry_run(run_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Retry a failed run with the same agent and instructions."""
+    result = await db.execute(
+        select(AgentRun).options(selectinload(AgentRun.agent)).where(AgentRun.id == run_id)
+    )
+    old_run = result.scalar_one_or_none()
+    if not old_run:
+        raise HTTPException(404, "Run not found")
+    if old_run.status not in ("failed",):
+        raise HTTPException(400, "Only failed runs can be retried")
+
+    new_run = AgentRun(
+        agent_id=old_run.agent_id,
+        instructions=old_run.instructions,
+        status="pending",
+    )
+    db.add(new_run)
+    await db.commit()
+    await db.refresh(new_run, ["agent"])
+
+    asyncio.create_task(_execute_run(str(new_run.id), str(old_run.agent_id)))
+
+    return AgentRunResponse.from_orm_model(new_run)
 
 
 async def _execute_run(run_id: str, agent_id: str) -> None:
@@ -196,6 +244,7 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
 
                 await set_agent_state(agent_id, STATE_IDLE)
                 await logger.ainfo("run_completed", run_id=run_id, agent=agent.name, cost=total_cost, duration_ms=duration_ms)
+                await _notify_run_done(agent.name, "done", response.content, cost=total_cost, duration_ms=duration_ms)
                 return
 
             # Execute tools
@@ -254,6 +303,7 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
             await db.commit()
 
         await set_agent_state(agent_id, STATE_ERROR)
+        await _notify_run_done(agent.name, "failed", error=f"Exceeded max rounds ({MAX_ROUNDS})")
 
     except Exception as e:
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -268,6 +318,44 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
                 await db.commit()
 
         await set_agent_state(agent_id, STATE_ERROR)
+        await _notify_run_done(agent.name if 'agent' in dir() else "Agent", "failed", error=str(e)[:200])
     finally:
         os.chdir(original_dir)
         shutil.rmtree(work_dir, ignore_errors=True)
+
+
+async def _notify_run_done(
+    agent_name: str, status: str, result: str | None = None, error: str | None = None,
+    cost: float = 0, duration_ms: float = 0,
+) -> None:
+    """Send a Telegram notification when a run completes (if bot is configured)."""
+    try:
+        from app.services.telegram_bot import telegram_bot
+        if not telegram_bot._running:
+            return
+
+        # Find any Telegram chat to notify (use the most recent one)
+        from app.models.conversation import Conversation
+        async with async_session() as db:
+            r = await db.execute(
+                select(Conversation)
+                .where(Conversation.metadata_.has_key("telegram_chat_id"))
+                .order_by(Conversation.updated_at.desc())
+                .limit(1)
+            )
+            conv = r.scalar_one_or_none()
+            if not conv:
+                return
+            chat_id = conv.metadata_.get("telegram_chat_id")
+            if not chat_id:
+                return
+
+        if status == "done":
+            preview = (result or "")[:300]
+            msg = f"✅ *{agent_name}* completed (${cost:.4f}, {duration_ms/1000:.1f}s)\n\n{preview}"
+        else:
+            msg = f"❌ *{agent_name}* failed:\n{error or 'Unknown error'}"
+
+        await telegram_bot._send_long_message(int(chat_id), msg)
+    except Exception:
+        pass  # notifications are best-effort

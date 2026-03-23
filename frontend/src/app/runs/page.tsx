@@ -13,6 +13,7 @@ import {
   ChevronDown,
   ChevronUp,
   RefreshCw,
+  RotateCcw,
 } from "lucide-react";
 
 interface AgentRun {
@@ -50,7 +51,7 @@ function StatusBadge({ status }: { status: AgentRun["status"] }) {
   );
 }
 
-function RunCard({ run, expanded, onToggle }: { run: AgentRun; expanded: boolean; onToggle: () => void }) {
+function RunCard({ run, expanded, onToggle, onRetry }: { run: AgentRun; expanded: boolean; onToggle: () => void; onRetry: () => void }) {
   const created = new Date(run.created_at);
   const timeAgo = getTimeAgo(created);
 
@@ -110,6 +111,14 @@ function RunCard({ run, expanded, onToggle }: { run: AgentRun; expanded: boolean
                 {run.error}
               </pre>
             </div>
+          )}
+
+          {/* Retry */}
+          {run.status === "failed" && (
+            <button onClick={onRetry}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-xs text-white transition-colors">
+              <RotateCcw size={12} /> Retry
+            </button>
           )}
 
           {/* Steps */}
@@ -238,6 +247,7 @@ export default function RunsPage() {
                   run={run}
                   expanded={expandedId === run.id}
                   onToggle={() => setExpandedId(expandedId === run.id ? null : run.id)}
+                  onRetry={async () => { await api.runs.retry(run.id); loadRuns(); }}
                 />
               ))}
             </div>

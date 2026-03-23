@@ -60,6 +60,9 @@ class TelegramBot:
                     {"command": "agent", "description": "Switch agent — /agent <name>"},
                     {"command": "run", "description": "Background run — /run <agent> <task>"},
                     {"command": "runs", "description": "Recent run statuses"},
+                    {"command": "history", "description": "Show recent conversation history"},
+                    {"command": "clear", "description": "Clear conversation history"},
+                    {"command": "budget", "description": "Show agent cost budgets"},
                     {"command": "help", "description": "Show commands"},
                 ]
             })
@@ -84,8 +87,12 @@ class TelegramBot:
                     updates = resp.json().get("result", [])
                     for update in updates:
                         self._offset = update["update_id"] + 1
-                        if "message" in update and "text" in update["message"]:
-                            asyncio.create_task(self._handle_message(update["message"]))
+                        if "message" in update:
+                            msg = update["message"]
+                            if "text" in msg:
+                                asyncio.create_task(self._handle_message(msg))
+                            elif "document" in msg or "photo" in msg:
+                                asyncio.create_task(self._handle_file_message(msg))
 
                 except httpx.ReadTimeout:
                     continue
@@ -116,6 +123,9 @@ class TelegramBot:
                 "/agent": self._cmd_agent,
                 "/run": self._cmd_run,
                 "/runs": self._cmd_runs,
+                "/history": self._cmd_history,
+                "/clear": self._cmd_clear,
+                "/budget": self._cmd_budget,
             }
             handler = handlers.get(cmd)
             if handler:
@@ -143,6 +153,9 @@ class TelegramBot:
             "/agent `<name>` — Switch to a specific agent\n"
             "/run `<agent>` `<task>` — Run an agent in the background\n"
             "/runs — Show recent run statuses\n"
+            "/history — Show recent messages\n"
+            "/clear — Clear conversation history\n"
+            "/budget — Show agent cost budgets\n"
             "/help — This message\n\n"
             "Or just type a message to chat with me!"
         )
@@ -286,6 +299,65 @@ class TelegramBot:
                 lines.append(f"   {r.error[:60]}")
 
         await self._send_message(chat_id, "\n".join(lines))
+
+    async def _cmd_history(self, chat_id: int, user_name: str, arg: str):
+        conversation_id = await self._get_or_create_conversation(chat_id, user_name)
+        messages = await self._load_history(conversation_id, limit=10)
+        if not messages:
+            await self._send_message(chat_id, "No messages in this conversation yet.")
+            return
+
+        lines = ["*Recent messages:*\n"]
+        for m in messages:
+            role_icon = "👤" if m["role"] == "user" else "🤖"
+            content = (m["content"] or "")[:150]
+            lines.append(f"{role_icon} {content}")
+        await self._send_long_message(chat_id, "\n".join(lines))
+
+    async def _cmd_clear(self, chat_id: int, user_name: str, arg: str):
+        # Delete the conversation mapping and Redis cache
+        await redis_client.delete(f"{CHAT_MAP_PREFIX}{chat_id}")
+        await redis_client.delete(f"{CHAT_AGENT_PREFIX}{chat_id}")
+        await self._send_message(chat_id, "🗑 Conversation cleared. Send a message to start fresh.")
+
+    async def _cmd_budget(self, chat_id: int, user_name: str, arg: str):
+        async with async_session() as db:
+            result = await db.execute(
+                select(Agent).where(Agent.is_active == True).order_by(Agent.name)
+            )
+            agents = result.scalars().all()
+
+        lines = ["*Agent budgets:*\n"]
+        for a in agents:
+            if a.daily_budget_usd is not None:
+                lines.append(f"• *{a.name}*: ${a.daily_budget_usd:.2f}/day")
+            else:
+                lines.append(f"• *{a.name}*: unlimited")
+        await self._send_message(chat_id, "\n".join(lines))
+
+    # ── File handler ──────────────────────────────────────────────────
+
+    async def _handle_file_message(self, message: dict):
+        """Handle photos and documents — describe the file to the agent."""
+        chat_id = message["chat"]["id"]
+        user_name = message["from"].get("first_name", "User")
+        caption = message.get("caption", "")
+
+        if "photo" in message:
+            # Get the largest photo
+            photo = message["photo"][-1]
+            file_id = photo["file_id"]
+            file_desc = f"[Photo received, file_id: {file_id}]"
+        elif "document" in message:
+            doc = message["document"]
+            file_name = doc.get("file_name", "unknown")
+            file_id = doc["file_id"]
+            file_desc = f"[Document received: {file_name}, file_id: {file_id}]"
+        else:
+            return
+
+        text = f"{file_desc}\n{caption}" if caption else file_desc
+        await self._handle_chat(chat_id, user_name, text)
 
     # ── Chat handler ────────────────────────────────────────────────
 

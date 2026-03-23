@@ -9,7 +9,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`);
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = body.detail || body.message || JSON.stringify(body);
+    } catch {}
+    throw new Error(detail);
   }
   if (res.status === 204) return undefined as T;
   return res.json();
@@ -106,6 +111,41 @@ export const api = {
         `/api/models${refresh ? "?refresh=true" : ""}`
       ),
   },
+  templates: {
+    list: () => request<{ items: any[] }>("/api/templates"),
+  },
+  workflows: {
+    list: () => request<{ items: any[] }>("/api/workflows"),
+    get: (id: string) => request<any>(`/api/workflows/${id}`),
+    create: (data: any) =>
+      request<any>("/api/workflows", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: any) =>
+      request<any>(`/api/workflows/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<void>(`/api/workflows/${id}`, { method: "DELETE" }),
+    run: (id: string) =>
+      request<any>(`/api/workflows/${id}/run`, { method: "POST" }),
+  },
+  webhooks: {
+    list: () => request<{ items: any[] }>("/api/webhooks"),
+    get: (id: string) => request<any>(`/api/webhooks/${id}`),
+    create: (data: any) =>
+      request<any>("/api/webhooks", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: any) =>
+      request<any>(`/api/webhooks/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<void>(`/api/webhooks/${id}`, { method: "DELETE" }),
+  },
+  schedules: {
+    list: () => request<{ items: any[] }>("/api/schedules"),
+    get: (id: string) => request<any>(`/api/schedules/${id}`),
+    create: (data: any) =>
+      request<any>("/api/schedules", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: any) =>
+      request<any>(`/api/schedules/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<void>(`/api/schedules/${id}`, { method: "DELETE" }),
+  },
   runs: {
     list: (params?: { status?: string; agent_id?: string; offset?: number; limit?: number }) => {
       const sp = new URLSearchParams();
@@ -119,6 +159,8 @@ export const api = {
     get: (id: string) => request<any>(`/api/runs/${id}`),
     create: (data: { agent_id: string; instructions?: string }) =>
       request<any>("/api/runs", { method: "POST", body: JSON.stringify(data) }),
+    retry: (id: string) =>
+      request<any>(`/api/runs/${id}/retry`, { method: "POST" }),
   },
   conversations: {
     list: (offset = 0, limit = 20) =>

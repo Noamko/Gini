@@ -26,26 +26,34 @@ async def lifespan(app: FastAPI):
     await logger.ainfo("redis_connected")
 
     # Mark stale runs as failed (from previous crashes/restarts)
-    from app.dependencies import async_session
-    from app.models.agent_run import AgentRun
-    from sqlalchemy import update, text
-    async with async_session() as db:
-        result = await db.execute(
-            update(AgentRun)
-            .where(AgentRun.status.in_(["pending", "running"]))
-            .values(status="failed", error="Cancelled: backend restarted")
-        )
-        if result.rowcount:
-            await logger.ainfo("stale_runs_cleaned", count=result.rowcount)
-        await db.commit()
+    try:
+        from app.dependencies import async_session
+        from app.models.agent_run import AgentRun
+        from sqlalchemy import update
+        async with async_session() as db:
+            result = await db.execute(
+                update(AgentRun)
+                .where(AgentRun.status.in_(["pending", "running"]))
+                .values(status="failed", error="Cancelled: backend restarted")
+            )
+            if result.rowcount:
+                await logger.ainfo("stale_runs_cleaned", count=result.rowcount)
+            await db.commit()
+    except Exception as e:
+        await logger.awarning("stale_runs_cleanup_skipped", error=str(e)[:100])
 
     # Start Telegram bot
     from app.services.telegram_bot import telegram_bot
     await telegram_bot.start()
 
+    # Start scheduler
+    from app.services.scheduler import scheduler
+    await scheduler.start()
+
     yield
 
     # Graceful shutdown
+    await scheduler.stop()
     await telegram_bot.stop()
     await logger.ainfo("shutting_down")
     # Give in-flight requests a moment to complete

@@ -16,6 +16,7 @@ class AgentCreate(BaseModel):
     is_main: bool = False
     use_memory: bool = False
     auto_approve: bool = False
+    daily_budget_usd: float | None = None
     metadata: dict = {}
 
 
@@ -30,6 +31,7 @@ class AgentUpdate(BaseModel):
     is_active: bool | None = None
     use_memory: bool | None = None
     auto_approve: bool | None = None
+    daily_budget_usd: float | None = None
     metadata: dict | None = None
 
 
@@ -46,6 +48,7 @@ class AgentResponse(IDTimestampMixin):
     is_active: bool
     use_memory: bool
     auto_approve: bool
+    daily_budget_usd: float | None
     metadata: dict
 
     model_config = {"from_attributes": True}
@@ -66,6 +69,7 @@ class AgentResponse(IDTimestampMixin):
             is_active=agent.is_active,
             use_memory=agent.use_memory,
             auto_approve=agent.auto_approve,
+            daily_budget_usd=agent.daily_budget_usd,
             metadata=agent.metadata_,
             created_at=agent.created_at,
             updated_at=agent.updated_at,

@@ -50,6 +50,7 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
   const [temperature, setTemperature] = useState(agent?.temperature ?? 0.7);
   const [maxTokens, setMaxTokens] = useState(agent?.max_tokens ?? 4096);
   const [autoApprove, setAutoApprove] = useState(agent?.auto_approve ?? false);
+  const [dailyBudget, setDailyBudget] = useState(agent?.daily_budget_usd?.toString() || "");
   const [saving, setSaving] = useState(false);
 
   // Skills & credentials
@@ -106,6 +107,7 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
         temperature,
         max_tokens: maxTokens,
         auto_approve: autoApprove,
+        daily_budget_usd: dailyBudget ? parseFloat(dailyBudget) : null,
       } as Partial<Agent>);
 
       // Sync skill assignments if editing
@@ -237,6 +239,21 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
               </p>
             </div>
           </label>
+        </div>
+
+        {/* Budget */}
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-zinc-400">Daily Budget (USD)</label>
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            value={dailyBudget}
+            onChange={(e) => setDailyBudget(e.target.value)}
+            className="w-48 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-500"
+            placeholder="No limit"
+          />
+          <p className="text-[11px] text-zinc-500">Leave blank for unlimited. Runs are blocked when budget is exceeded.</p>
         </div>
 
         {/* Skills */}

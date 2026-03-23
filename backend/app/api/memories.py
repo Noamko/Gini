@@ -1,7 +1,7 @@
 """Memory CRUD and search endpoints."""
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, UploadFile, File, Form
 from app.schemas.memory import MemoryCreate, MemoryResponse
 from app.services.memory_service import (
     store_memory,
@@ -83,6 +83,66 @@ async def create_memory(body: MemoryCreate):
         created_at=memory.created_at,
         updated_at=memory.updated_at,
     )
+
+
+@router.post("/api/memories/upload", status_code=201)
+async def upload_document(
+    file: UploadFile = File(...),
+    agent_id: str | None = Form(None),
+    source: str = Form("document"),
+):
+    """Upload a document and store its content as memories (chunked)."""
+    content_bytes = await file.read()
+
+    # Extract text based on file type
+    filename = file.filename or "unknown"
+    if filename.endswith(".txt") or filename.endswith(".md") or filename.endswith(".csv"):
+        text = content_bytes.decode("utf-8", errors="ignore")
+    elif filename.endswith(".json"):
+        text = content_bytes.decode("utf-8", errors="ignore")
+    else:
+        # Try as plain text
+        text = content_bytes.decode("utf-8", errors="ignore")
+
+    if not text.strip():
+        from fastapi import HTTPException
+        raise HTTPException(400, "Could not extract text from file")
+
+    # Chunk the text into pieces (~1000 chars each)
+    chunks = _chunk_text(text, max_chars=1000)
+    agent_uuid = UUID(agent_id) if agent_id else None
+
+    stored = []
+    for i, chunk in enumerate(chunks):
+        memory = await store_memory(
+            content=chunk,
+            agent_id=agent_uuid,
+            source=source,
+            source_id=f"{filename}:chunk_{i}",
+            metadata={"filename": filename, "chunk": i, "total_chunks": len(chunks)},
+        )
+        stored.append(memory)
+
+    return {
+        "filename": filename,
+        "chunks": len(stored),
+        "total_chars": len(text),
+    }
+
+
+def _chunk_text(text: str, max_chars: int = 1000) -> list[str]:
+    """Split text into chunks, trying to break at paragraph boundaries."""
+    chunks = []
+    current = ""
+    for paragraph in text.split("\n\n"):
+        if len(current) + len(paragraph) + 2 > max_chars and current:
+            chunks.append(current.strip())
+            current = paragraph
+        else:
+            current = current + "\n\n" + paragraph if current else paragraph
+    if current.strip():
+        chunks.append(current.strip())
+    return chunks if chunks else [text[:max_chars]]
 
 
 @router.delete("/api/memories/{memory_id}", status_code=204)

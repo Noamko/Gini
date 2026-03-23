@@ -18,6 +18,8 @@ dependencies = [
     "anthropic>=0.40.0",
     "cryptography>=44.0.0",
     "pgvector>=0.3.0",
+    "croniter>=2.0.0",
+    "python-multipart>=0.0.9",
 ]
 
 [tool.setuptools.packages.find]

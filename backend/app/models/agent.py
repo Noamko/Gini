@@ -20,4 +20,5 @@ class Agent(Base, UUIDMixin, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     use_memory: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_approve: Mapped[bool] = mapped_column(Boolean, default=False)
+    daily_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
