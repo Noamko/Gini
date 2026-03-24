@@ -90,6 +90,8 @@ class TelegramBot:
                             msg = update["message"]
                             if "text" in msg:
                                 asyncio.create_task(self._handle_message(msg))
+                            elif "voice" in msg or "audio" in msg:
+                                asyncio.create_task(self._handle_voice_message(msg))
                             elif "document" in msg or "photo" in msg:
                                 asyncio.create_task(self._handle_file_message(msg))
 
@@ -335,6 +337,60 @@ class TelegramBot:
         await self._send_message(chat_id, "\n".join(lines))
 
     # ── File handler ──────────────────────────────────────────────────
+
+    async def _handle_voice_message(self, message: dict):
+        """Transcribe voice/audio messages and process as text."""
+        chat_id = message["chat"]["id"]
+        user_name = message["from"].get("first_name", "User")
+
+        voice = message.get("voice") or message.get("audio")
+        if not voice:
+            return
+
+        file_id = voice["file_id"]
+        await self._send_action(chat_id, "typing")
+
+        try:
+            # Get file path from Telegram
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(f"{self.base_url}/getFile", params={"file_id": file_id})
+                file_path = resp.json()["result"]["file_path"]
+
+                # Download the file
+                file_resp = await client.get(
+                    f"https://api.telegram.org/file/bot{self.token}/{file_path}"
+                )
+                audio_bytes = file_resp.content
+
+            # Transcribe with OpenAI Whisper
+            from openai import AsyncOpenAI
+            from app.config import settings
+            openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
+
+            # Whisper needs a file-like object with a name
+            import io
+            audio_file = io.BytesIO(audio_bytes)
+            audio_file.name = "voice.ogg"
+
+            transcription = await openai_client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+            )
+            text = transcription.text.strip()
+
+            if not text:
+                await self._send_message(chat_id, "Couldn't transcribe the voice message.")
+                return
+
+            await logger.ainfo("voice_transcribed", chat_id=chat_id, text=text[:100])
+            await self._send_message(chat_id, f"🎤 _{text}_")
+
+            # Process as regular chat message
+            await self._handle_chat(chat_id, user_name, text)
+
+        except Exception as e:
+            await logger.aerror("voice_error", chat_id=chat_id, error=str(e))
+            await self._send_message(chat_id, "Failed to process voice message. Please try again or type your message.")
 
     async def _handle_file_message(self, message: dict):
         """Handle photos and documents — describe the file to the agent."""
