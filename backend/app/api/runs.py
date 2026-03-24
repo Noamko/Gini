@@ -233,7 +233,6 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
 
                 await set_agent_state(agent_id, STATE_IDLE)
                 await logger.ainfo("run_completed", run_id=run_id, agent=agent.name, cost=total_cost, duration_ms=duration_ms)
-                await _notify_run_done(agent.name, "done", response.content, cost=total_cost, duration_ms=duration_ms)
                 return
 
             # Execute tools
@@ -292,7 +291,6 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
             await db.commit()
 
         await set_agent_state(agent_id, STATE_ERROR)
-        await _notify_run_done(agent.name, "failed", error=f"Exceeded max rounds ({MAX_ROUNDS})")
 
     except Exception as e:
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -307,44 +305,7 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
                 await db.commit()
 
         await set_agent_state(agent_id, STATE_ERROR)
-        await _notify_run_done(agent.name if 'agent' in dir() else "Agent", "failed", error=str(e)[:200])
     finally:
         os.chdir(original_dir)
         shutil.rmtree(work_dir, ignore_errors=True)
 
-
-async def _notify_run_done(
-    agent_name: str, status: str, result: str | None = None, error: str | None = None,
-    cost: float = 0, duration_ms: float = 0,
-) -> None:
-    """Send a Telegram notification when a run completes (if bot is configured)."""
-    try:
-        from app.services.telegram_bot import telegram_bot
-        if not telegram_bot._running:
-            return
-
-        # Find any Telegram chat to notify (use the most recent one)
-        from app.models.conversation import Conversation
-        async with async_session() as db:
-            r = await db.execute(
-                select(Conversation)
-                .where(Conversation.metadata_.has_key("telegram_chat_id"))
-                .order_by(Conversation.updated_at.desc())
-                .limit(1)
-            )
-            conv = r.scalar_one_or_none()
-            if not conv:
-                return
-            chat_id = conv.metadata_.get("telegram_chat_id")
-            if not chat_id:
-                return
-
-        if status == "done":
-            preview = (result or "")[:300]
-            msg = f"✅ *{agent_name}* completed (${cost:.4f}, {duration_ms/1000:.1f}s)\n\n{preview}"
-        else:
-            msg = f"❌ *{agent_name}* failed:\n{error or 'Unknown error'}"
-
-        await telegram_bot._send_long_message(int(chat_id), msg)
-    except Exception:
-        pass  # notifications are best-effort
