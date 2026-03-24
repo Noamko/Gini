@@ -15,19 +15,18 @@ router = APIRouter(tags=["models"])
 CACHE_KEY = "gini:available_models"
 CACHE_TTL = 3600  # 1 hour
 
-# Well-known Anthropic models (Anthropic doesn't have a list-models API)
-ANTHROPIC_MODELS = [
-    # Claude 4 family
-    {"id": "claude-opus-4-20250514", "name": "Claude Opus 4", "provider": "anthropic"},
-    {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4", "provider": "anthropic"},
-    # Claude 3.5 family
-    {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "provider": "anthropic"},
-    {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "provider": "anthropic"},
-    # Claude 3 family
-    {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus", "provider": "anthropic"},
-    {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet", "provider": "anthropic"},
-    {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku", "provider": "anthropic"},
-]
+async def _fetch_anthropic_models() -> list[dict]:
+    """Fetch available models from Anthropic API."""
+    try:
+        client = llm_gateway.anthropic
+        models = await client.models.list()
+        return [
+            {"id": m.id, "name": m.display_name, "provider": "anthropic"}
+            for m in models.data
+        ]
+    except Exception as e:
+        await logger.awarning("anthropic_models_fetch_failed", error=str(e))
+        return []
 
 
 async def _fetch_openai_models() -> list[dict]:
@@ -63,9 +62,10 @@ async def list_models(refresh: bool = False):
 
     all_models = []
 
-    # Anthropic (hardcoded — no list API)
+    # Anthropic (fetched from API)
     if settings.anthropic_api_key and not settings.anthropic_api_key.startswith("sk-your"):
-        all_models.extend(ANTHROPIC_MODELS)
+        anthropic_models = await _fetch_anthropic_models()
+        all_models.extend(anthropic_models)
 
     # OpenAI (fetched from API)
     if settings.openai_api_key and not settings.openai_api_key.startswith("sk-your"):

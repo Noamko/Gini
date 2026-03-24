@@ -29,27 +29,16 @@ const PROVIDERS = [
   { value: "openai", label: "OpenAI" },
 ];
 
-const MODELS: Record<string, { value: string; label: string }[]> = {
+const FALLBACK_MODELS: Record<string, { value: string; label: string }[]> = {
   anthropic: [
-    { value: "claude-opus-4-20250514", label: "Claude Opus 4" },
+    { value: "claude-opus-4-6", label: "Claude Opus 4.6" },
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
     { value: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
-    { value: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet" },
-    { value: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku" },
-    { value: "claude-3-opus-20240229", label: "Claude 3 Opus" },
-    { value: "claude-3-sonnet-20240229", label: "Claude 3 Sonnet" },
-    { value: "claude-3-haiku-20240307", label: "Claude 3 Haiku" },
   ],
   openai: [
+    { value: "gpt-5.4-pro", label: "GPT-5.4 Pro" },
+    { value: "gpt-5.4", label: "GPT-5.4" },
     { value: "gpt-4o", label: "GPT-4o" },
-    { value: "gpt-4o-mini", label: "GPT-4o Mini" },
-    { value: "gpt-4-turbo", label: "GPT-4 Turbo" },
-    { value: "gpt-4", label: "GPT-4" },
-    { value: "gpt-3.5-turbo", label: "GPT-3.5 Turbo" },
-    { value: "o1", label: "o1" },
-    { value: "o1-mini", label: "o1 Mini" },
-    { value: "o3", label: "o3" },
-    { value: "o3-mini", label: "o3 Mini" },
-    { value: "o4-mini", label: "o4 Mini" },
   ],
 };
 
@@ -65,6 +54,9 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
   const [dailyBudget, setDailyBudget] = useState(agent?.daily_budget_usd?.toString() || "");
   const [saving, setSaving] = useState(false);
 
+  // Models from API
+  const [apiModels, setApiModels] = useState<{ id: string; name: string; provider: string }[]>([]);
+
   // Skills & credentials
   const [allSkills, setAllSkills] = useState<SkillOption[]>([]);
   const [allCredentials, setAllCredentials] = useState<CredentialOption[]>([]);
@@ -73,8 +65,9 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
 
   const isEditing = !!agent;
 
-  // Load available skills, credentials, and current assignments
+  // Load available models, skills, credentials, and current assignments
   useEffect(() => {
+    api.models.list().then((data) => setApiModels(data.models)).catch(() => {});
     api.skills.list().then((data) => setAllSkills(data)).catch(() => {});
     api.credentials.list().then((data) => setAllCredentials(data)).catch(() => {});
 
@@ -87,12 +80,16 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
     }
   }, [agent]);
 
+  const providerModels = apiModels.filter((m) => m.provider === provider);
+  const modelOptions = providerModels.length > 0
+    ? providerModels.map((m) => ({ value: m.id, label: m.name }))
+    : (FALLBACK_MODELS[provider] || []);
+
   useEffect(() => {
-    if (!agent) {
-      const models = MODELS[provider];
-      if (models?.length) setModel(models[0].value);
+    if (!agent && modelOptions.length > 0) {
+      setModel(modelOptions[0].value);
     }
-  }, [provider, agent]);
+  }, [provider, agent, modelOptions.length]);
 
   const toggleSkill = (skillId: string) => {
     setAssignedSkillIds((prev) => {
@@ -202,7 +199,7 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
               onChange={(e) => setModel(e.target.value)}
               className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-500"
             >
-              {(MODELS[provider] || []).map((m) => (
+              {modelOptions.map((m) => (
                 <option key={m.value} value={m.value}>{m.label}</option>
               ))}
             </select>
