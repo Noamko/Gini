@@ -155,6 +155,12 @@ export const api = {
       request<any>("/api/runs", { method: "POST", body: JSON.stringify(data) }),
     retry: (id: string) =>
       request<any>(`/api/runs/${id}/retry`, { method: "POST" }),
+    stop: (id: string) =>
+      request<any>(`/api/runs/${id}/stop`, { method: "POST" }),
+    pause: (id: string) =>
+      request<any>(`/api/runs/${id}/pause`, { method: "POST" }),
+    resume: (id: string) =>
+      request<any>(`/api/runs/${id}/resume`, { method: "POST" }),
   },
   conversations: {
     list: (offset = 0, limit = 20) =>

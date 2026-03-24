@@ -5,6 +5,8 @@ import { Sidebar } from "@/components/layout/Sidebar";
 import { api } from "@/lib/api-client";
 import {
   Play,
+  Pause,
+  Square,
   CheckCircle,
   XCircle,
   Loader2,
@@ -20,7 +22,7 @@ interface AgentRun {
   id: string;
   agent_id: string;
   agent_name: string;
-  status: "pending" | "running" | "done" | "failed";
+  status: "pending" | "running" | "paused" | "done" | "failed";
   instructions: string | null;
   result: string | null;
   error: string | null;
@@ -36,6 +38,7 @@ interface AgentRun {
 const STATUS_CONFIG = {
   pending: { icon: Clock, color: "text-zinc-400", bg: "bg-zinc-800", label: "Pending" },
   running: { icon: Loader2, color: "text-blue-400", bg: "bg-blue-950/30", label: "Running" },
+  paused: { icon: Pause, color: "text-amber-400", bg: "bg-amber-950/30", label: "Paused" },
   done: { icon: CheckCircle, color: "text-emerald-400", bg: "bg-emerald-950/30", label: "Done" },
   failed: { icon: XCircle, color: "text-red-400", bg: "bg-red-950/30", label: "Failed" },
 };
@@ -51,7 +54,10 @@ function StatusBadge({ status }: { status: AgentRun["status"] }) {
   );
 }
 
-function RunCard({ run, expanded, onToggle, onRetry }: { run: AgentRun; expanded: boolean; onToggle: () => void; onRetry: () => void }) {
+function RunCard({ run, expanded, onToggle, onRetry, onStop, onPause, onResume }: {
+  run: AgentRun; expanded: boolean; onToggle: () => void;
+  onRetry: () => void; onStop: () => void; onPause: () => void; onResume: () => void;
+}) {
   const created = new Date(run.created_at);
   const timeAgo = getTimeAgo(created);
 
@@ -113,13 +119,39 @@ function RunCard({ run, expanded, onToggle, onRetry }: { run: AgentRun; expanded
             </div>
           )}
 
-          {/* Retry */}
-          {run.status === "failed" && (
-            <button onClick={onRetry}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-xs text-white transition-colors">
-              <RotateCcw size={12} /> Retry
-            </button>
-          )}
+          {/* Run controls */}
+          <div className="flex gap-2">
+            {run.status === "running" && (
+              <>
+                <button onClick={onPause}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-xs text-white transition-colors">
+                  <Pause size={12} /> Pause
+                </button>
+                <button onClick={onStop}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs text-white transition-colors">
+                  <Square size={12} /> Stop
+                </button>
+              </>
+            )}
+            {run.status === "paused" && (
+              <>
+                <button onClick={onResume}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs text-white transition-colors">
+                  <Play size={12} /> Resume
+                </button>
+                <button onClick={onStop}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs text-white transition-colors">
+                  <Square size={12} /> Stop
+                </button>
+              </>
+            )}
+            {run.status === "failed" && (
+              <button onClick={onRetry}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-xs text-white transition-colors">
+                <RotateCcw size={12} /> Retry
+              </button>
+            )}
+          </div>
 
           {/* Steps */}
           {run.steps.length > 0 && (
@@ -248,6 +280,9 @@ export default function RunsPage() {
                   expanded={expandedId === run.id}
                   onToggle={() => setExpandedId(expandedId === run.id ? null : run.id)}
                   onRetry={async () => { await api.runs.retry(run.id); loadRuns(); }}
+                  onStop={async () => { await api.runs.stop(run.id); loadRuns(); }}
+                  onPause={async () => { await api.runs.pause(run.id); loadRuns(); }}
+                  onResume={async () => { await api.runs.resume(run.id); loadRuns(); }}
                 />
               ))}
             </div>

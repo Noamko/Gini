@@ -12,7 +12,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.dependencies import get_db, async_session
+from app.dependencies import get_db, async_session, redis_client
 from app.models.agent import Agent
 from app.models.agent_run import AgentRun
 from app.schemas.agent_run import AgentRunCreate, AgentRunResponse
@@ -27,6 +27,19 @@ logger = structlog.get_logger("runs")
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
 MAX_ROUNDS = 100
+RUN_SIGNAL_PREFIX = "gini:run:signal:"
+
+
+async def _check_run_signal(run_id: str) -> str | None:
+    """Check if a run has a stop/pause signal. Returns 'stop', 'pause', or None."""
+    return await redis_client.get(f"{RUN_SIGNAL_PREFIX}{run_id}")
+
+
+async def _set_run_signal(run_id: str, signal: str | None):
+    if signal:
+        await redis_client.set(f"{RUN_SIGNAL_PREFIX}{run_id}", signal, ex=3600)
+    else:
+        await redis_client.delete(f"{RUN_SIGNAL_PREFIX}{run_id}")
 
 
 @router.get("")
@@ -141,6 +154,44 @@ async def retry_run(run_id: UUID, db: AsyncSession = Depends(get_db)):
     return AgentRunResponse.from_orm_model(new_run)
 
 
+@router.post("/{run_id}/stop")
+async def stop_run(run_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Stop a running agent."""
+    run = await db.get(AgentRun, run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    if run.status not in ("running", "pending", "paused"):
+        raise HTTPException(400, f"Cannot stop a {run.status} run")
+    await _set_run_signal(str(run_id), "stop")
+    return {"status": "stopping"}
+
+
+@router.post("/{run_id}/pause")
+async def pause_run(run_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Pause a running agent."""
+    run = await db.get(AgentRun, run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    if run.status != "running":
+        raise HTTPException(400, f"Cannot pause a {run.status} run")
+    await _set_run_signal(str(run_id), "pause")
+    return {"status": "pausing"}
+
+
+@router.post("/{run_id}/resume")
+async def resume_run(run_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Resume a paused agent."""
+    run = await db.get(AgentRun, run_id)
+    if not run:
+        raise HTTPException(404, "Run not found")
+    if run.status != "paused":
+        raise HTTPException(400, f"Cannot resume a {run.status} run")
+    await _set_run_signal(str(run_id), None)
+    # Re-fire execution
+    asyncio.create_task(_execute_run(str(run_id), str(run.agent_id)))
+    return {"status": "resuming"}
+
+
 async def _execute_run(run_id: str, agent_id: str) -> None:
     """Execute an agent run in the background."""
     await logger.ainfo("run_starting", run_id=run_id, agent_id=agent_id)
@@ -184,6 +235,37 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
         steps = []
 
         for round_num in range(MAX_ROUNDS):
+            # Check for stop/pause signals
+            signal = await _check_run_signal(run_id)
+            if signal == "stop":
+                duration_ms = round((time.perf_counter() - start) * 1000, 2)
+                async with async_session() as db:
+                    r = await db.get(AgentRun, UUID(run_id))
+                    r.status = "failed"
+                    r.error = "Stopped by user"
+                    r.duration_ms = duration_ms
+                    r.steps = steps
+                    r.input_tokens = total_input
+                    r.output_tokens = total_output
+                    r.cost_usd = total_cost
+                    await db.commit()
+                await _set_run_signal(run_id, None)
+                await set_agent_state(agent_id, STATE_IDLE)
+                await logger.ainfo("run_stopped", run_id=run_id)
+                return
+            elif signal == "pause":
+                async with async_session() as db:
+                    r = await db.get(AgentRun, UUID(run_id))
+                    r.status = "paused"
+                    r.steps = steps
+                    r.input_tokens = total_input
+                    r.output_tokens = total_output
+                    r.cost_usd = total_cost
+                    await db.commit()
+                await set_agent_state(agent_id, STATE_IDLE)
+                await logger.ainfo("run_paused", run_id=run_id)
+                return  # execution stops; resume will re-fire _execute_run
+
             await set_agent_state(agent_id, STATE_THINKING)
 
             response: LLMResponse = await llm_gateway.call_with_tools(
