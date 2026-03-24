@@ -69,22 +69,6 @@ export const api = {
       return data.items;
     },
   },
-  memories: {
-    list: (params?: { agent_id?: string; source?: string; q?: string; offset?: number; limit?: number }) => {
-      const sp = new URLSearchParams();
-      if (params?.agent_id) sp.set("agent_id", params.agent_id);
-      if (params?.source) sp.set("source", params.source);
-      if (params?.q) sp.set("q", params.q);
-      if (params?.offset) sp.set("offset", String(params.offset));
-      if (params?.limit) sp.set("limit", String(params.limit));
-      const qs = sp.toString();
-      return request<{ items: any[]; total: number }>(`/api/memories${qs ? `?${qs}` : ""}`);
-    },
-    create: (data: { content: string; agent_id?: string; source?: string; metadata?: Record<string, unknown> }) =>
-      request<any>("/api/memories", { method: "POST", body: JSON.stringify(data) }),
-    delete: (id: string) =>
-      request<void>(`/api/memories/${id}`, { method: "DELETE" }),
-  },
   traces: {
     list: (params?: { conversation_id?: string; agent_name?: string; offset?: number; limit?: number }) => {
       const sp = new URLSearchParams();

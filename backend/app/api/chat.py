@@ -16,7 +16,6 @@ from app.models.message import Message
 from app.services.llm_gateway import llm_gateway, LLMResponse
 from app.services.tool_runner import execute_tool
 from app.services.skill_executor import get_assembled_prompt, get_assembled_prompt_with_credentials
-from app.services.memory_service import get_relevant_context
 from app.services.agent_orchestrator import (
     get_agent_by_name, run_sub_agent, set_agent_state,
     broadcast_dashboard_event, STATE_THINKING, STATE_IDLE, STATE_DELEGATING,
@@ -126,20 +125,9 @@ async def chat_websocket(websocket: WebSocket, conversation_id: UUID):
 
             tool_specs = get_llm_tool_specs()
 
-            # Get assembled prompt + memory context in parallel (lazy RAG)
-            # Inject credentials for auto-approve agents (they run autonomously)
+            # Get assembled prompt (inject credentials for auto-approve agents)
             prompt_fn = get_assembled_prompt_with_credentials if agent.auto_approve else get_assembled_prompt
-            prompt_task = asyncio.create_task(prompt_fn(agent))
-            memory_task = (
-                asyncio.create_task(get_relevant_context(user_content, agent_id=agent.id))
-                if agent.use_memory else None
-            )
-
-            system_prompt = await prompt_task
-            if memory_task:
-                memory_context = await memory_task
-                if memory_context:
-                    system_prompt = f"{system_prompt}\n\n{memory_context}"
+            system_prompt = await prompt_fn(agent)
 
             try:
                 await _run_agent_loop(websocket, conversation_id, agent, history, tool_specs, incoming, system_prompt)

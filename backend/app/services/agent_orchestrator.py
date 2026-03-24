@@ -15,7 +15,6 @@ from app.models.agent import Agent
 from app.models.agent_run import AgentRun
 from app.services.llm_gateway import llm_gateway, LLMResponse
 from app.services.skill_executor import get_assembled_prompt_with_credentials
-from app.services.memory_service import get_relevant_context
 from app.tools.registry import get_llm_tool_specs
 
 logger = structlog.get_logger("orchestrator")
@@ -114,17 +113,7 @@ async def run_sub_agent(
         source=f"agent:{agent.name}",
     )
 
-    prompt_task = asyncio.create_task(get_assembled_prompt_with_credentials(agent))
-    memory_task = (
-        asyncio.create_task(get_relevant_context(task, agent_id=agent.id))
-        if agent.use_memory else None
-    )
-
-    system_prompt = await prompt_task
-    if memory_task:
-        memory_context = await memory_task
-        if memory_context:
-            system_prompt = f"{system_prompt}\n\n{memory_context}"
+    system_prompt = await get_assembled_prompt_with_credentials(agent)
 
     tool_specs = get_llm_tool_specs()
 

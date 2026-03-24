@@ -13,7 +13,6 @@ from app.models.conversation import Conversation
 from app.models.message import Message
 from app.services.llm_gateway import llm_gateway, LLMResponse
 from app.services.skill_executor import get_assembled_prompt_with_credentials, get_assembled_prompt
-from app.services.memory_service import get_relevant_context
 from app.services.tool_runner import execute_tool
 from app.tools.registry import get_llm_tool_specs
 from sqlalchemy import select, func
@@ -373,11 +372,6 @@ class TelegramBot:
 
             prompt_fn = get_assembled_prompt_with_credentials if agent.auto_approve else get_assembled_prompt
             system_prompt = await prompt_fn(agent)
-
-            if agent.use_memory:
-                memory_context = await get_relevant_context(text, agent_id=agent.id)
-                if memory_context:
-                    system_prompt = f"{system_prompt}\n\n{memory_context}"
 
             messages = await self._load_history(conversation_id)
             messages.append({"role": "user", "content": text})

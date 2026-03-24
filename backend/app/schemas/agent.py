@@ -14,7 +14,7 @@ class AgentCreate(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 4096
     is_main: bool = False
-    use_memory: bool = False
+
     auto_approve: bool = False
     daily_budget_usd: float | None = None
     metadata: dict = {}
@@ -29,7 +29,7 @@ class AgentUpdate(BaseModel):
     temperature: float | None = None
     max_tokens: int | None = None
     is_active: bool | None = None
-    use_memory: bool | None = None
+
     auto_approve: bool | None = None
     daily_budget_usd: float | None = None
     metadata: dict | None = None
@@ -46,7 +46,7 @@ class AgentResponse(IDTimestampMixin):
     state: str
     is_main: bool
     is_active: bool
-    use_memory: bool
+
     auto_approve: bool
     daily_budget_usd: float | None
     metadata: dict
@@ -67,7 +67,6 @@ class AgentResponse(IDTimestampMixin):
             state=agent.state,
             is_main=agent.is_main,
             is_active=agent.is_active,
-            use_memory=agent.use_memory,
             auto_approve=agent.auto_approve,
             daily_budget_usd=agent.daily_budget_usd,
             metadata=agent.metadata_,

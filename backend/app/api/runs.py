@@ -18,7 +18,6 @@ from app.models.agent_run import AgentRun
 from app.schemas.agent_run import AgentRunCreate, AgentRunResponse
 from app.services.llm_gateway import llm_gateway, LLMResponse
 from app.services.skill_executor import get_assembled_prompt_with_credentials
-from app.services.memory_service import get_relevant_context
 from app.services.tool_runner import execute_tool
 from app.services.agent_orchestrator import set_agent_state, STATE_THINKING, STATE_EXECUTING, STATE_IDLE, STATE_ERROR
 from app.tools.registry import get_llm_tool_specs
@@ -173,18 +172,8 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
 
     try:
         # Build prompt (with credentials injected for background execution)
-        prompt_task = asyncio.create_task(get_assembled_prompt_with_credentials(agent))
         instructions = run.instructions or f"You are {agent.name}. Execute your primary function and report the result."
-        memory_task = (
-            asyncio.create_task(get_relevant_context(instructions, agent_id=agent.id))
-            if agent.use_memory else None
-        )
-
-        system_prompt = await prompt_task
-        if memory_task:
-            memory_context = await memory_task
-            if memory_context:
-                system_prompt = f"{system_prompt}\n\n{memory_context}"
+        system_prompt = await get_assembled_prompt_with_credentials(agent)
 
         tool_specs = get_llm_tool_specs()
         messages = [{"role": "user", "content": instructions}]
