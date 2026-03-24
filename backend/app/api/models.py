@@ -29,22 +29,25 @@ async def _fetch_anthropic_models() -> list[dict]:
         return []
 
 
+OPENAI_CHAT_PREFIXES = ("gpt-3.5", "gpt-4", "gpt-5", "o1", "o3", "o4")
+OPENAI_EXCLUDE = ("realtime", "audio", "tts", "transcribe", "search", "instruct", "codex", "chat-latest", "16k", "image")
+
+
 async def _fetch_openai_models() -> list[dict]:
     """Fetch chat-capable models from OpenAI API."""
     try:
         response = await llm_gateway.openai.models.list()
         models = []
         for m in response.data:
-            # Filter to chat models only
-            if any(prefix in m.id for prefix in ("gpt-4", "gpt-3.5", "o1", "o3", "o4")):
-                if "realtime" in m.id or "audio" in m.id or "search" in m.id:
-                    continue
-                models.append({
-                    "id": m.id,
-                    "name": m.id,
-                    "provider": "openai",
-                })
-        # Sort: newest/best first
+            if not any(m.id.startswith(p) for p in OPENAI_CHAT_PREFIXES):
+                continue
+            if any(ex in m.id for ex in OPENAI_EXCLUDE):
+                continue
+            models.append({
+                "id": m.id,
+                "name": m.id,
+                "provider": "openai",
+            })
         models.sort(key=lambda x: x["id"], reverse=True)
         return models
     except Exception as e:
