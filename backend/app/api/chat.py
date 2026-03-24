@@ -27,7 +27,7 @@ logger = structlog.get_logger("chat")
 
 router = APIRouter()
 
-MAX_TOOL_ROUNDS = 10
+MAX_TOOL_ROUNDS = 100
 
 
 async def _persist_message(conversation_id: UUID, **kwargs) -> None:

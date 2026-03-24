@@ -21,7 +21,7 @@ from sqlalchemy.orm import selectinload
 logger = structlog.get_logger("telegram")
 
 TELEGRAM_API = "https://api.telegram.org/bot{token}"
-MAX_TOOL_ROUNDS = 10
+MAX_TOOL_ROUNDS = 100
 CHAT_MAP_PREFIX = "gini:telegram:chat:"
 CHAT_AGENT_PREFIX = "gini:telegram:agent:"
 

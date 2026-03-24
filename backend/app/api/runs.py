@@ -26,7 +26,7 @@ logger = structlog.get_logger("runs")
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
-MAX_ROUNDS = 10
+MAX_ROUNDS = 100
 
 
 @router.get("")

@@ -31,7 +31,7 @@ STATE_ERROR = "error"
 AGENT_STATE_KEY = "gini:agent_states"
 DASHBOARD_CHANNEL = "gini:dashboard"
 
-MAX_DELEGATION_ROUNDS = 10
+MAX_DELEGATION_ROUNDS = 100
 
 
 async def set_agent_state(agent_id: str, state: str, metadata: dict | None = None) -> None:
