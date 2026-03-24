@@ -17,11 +17,16 @@ CACHE_TTL = 3600  # 1 hour
 
 # Well-known Anthropic models (Anthropic doesn't have a list-models API)
 ANTHROPIC_MODELS = [
+    # Claude 4 family
     {"id": "claude-opus-4-20250514", "name": "Claude Opus 4", "provider": "anthropic"},
     {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4", "provider": "anthropic"},
-    {"id": "claude-haiku-4-20250506", "name": "Claude Haiku 4", "provider": "anthropic"},
+    # Claude 3.5 family
     {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "provider": "anthropic"},
     {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku", "provider": "anthropic"},
+    # Claude 3 family
+    {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus", "provider": "anthropic"},
+    {"id": "claude-3-sonnet-20240229", "name": "Claude 3 Sonnet", "provider": "anthropic"},
+    {"id": "claude-3-haiku-20240307", "name": "Claude 3 Haiku", "provider": "anthropic"},
 ]
 
 

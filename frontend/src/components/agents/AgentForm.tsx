@@ -31,13 +31,25 @@ const PROVIDERS = [
 
 const MODELS: Record<string, { value: string; label: string }[]> = {
   anthropic: [
-    { value: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
     { value: "claude-opus-4-20250514", label: "Claude Opus 4" },
-    { value: "claude-haiku-3-5-20241022", label: "Claude Haiku 3.5" },
+    { value: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
+    { value: "claude-3-5-sonnet-20241022", label: "Claude 3.5 Sonnet" },
+    { value: "claude-3-5-haiku-20241022", label: "Claude 3.5 Haiku" },
+    { value: "claude-3-opus-20240229", label: "Claude 3 Opus" },
+    { value: "claude-3-sonnet-20240229", label: "Claude 3 Sonnet" },
+    { value: "claude-3-haiku-20240307", label: "Claude 3 Haiku" },
   ],
   openai: [
     { value: "gpt-4o", label: "GPT-4o" },
     { value: "gpt-4o-mini", label: "GPT-4o Mini" },
+    { value: "gpt-4-turbo", label: "GPT-4 Turbo" },
+    { value: "gpt-4", label: "GPT-4" },
+    { value: "gpt-3.5-turbo", label: "GPT-3.5 Turbo" },
+    { value: "o1", label: "o1" },
+    { value: "o1-mini", label: "o1 Mini" },
+    { value: "o3", label: "o3" },
+    { value: "o3-mini", label: "o3 Mini" },
+    { value: "o4-mini", label: "o4 Mini" },
   ],
 };
 
