@@ -157,11 +157,15 @@ class LLMGateway:
             openai_messages.append({"role": "system", "content": system_prompt})
         openai_messages.extend(messages)
 
+        # Newer OpenAI models (gpt-5.x, o1, o3, o4, gpt-4.1) use max_completion_tokens
+        uses_new_param = any(model.startswith(p) for p in ("gpt-5", "gpt-4.1", "o1", "o3", "o4"))
+        token_param = "max_completion_tokens" if uses_new_param else "max_tokens"
+
         kwargs = {
             "model": model,
             "messages": openai_messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
+            token_param: max_tokens,
         }
         if tools:
             kwargs["tools"] = [
@@ -290,9 +294,12 @@ class LLMGateway:
             openai_messages.append({"role": "system", "content": system_prompt})
         openai_messages.extend(messages)
 
+        uses_new_param = any(model.startswith(p) for p in ("gpt-5", "gpt-4.1", "o1", "o3", "o4"))
+        token_kwarg = {"max_completion_tokens": max_tokens} if uses_new_param else {"max_tokens": max_tokens}
+
         stream = await self.openai.chat.completions.create(
             model=model, messages=openai_messages, temperature=temperature,
-            max_tokens=max_tokens, stream=True, stream_options={"include_usage": True},
+            **token_kwarg, stream=True, stream_options={"include_usage": True},
         )
 
         input_tokens = 0
