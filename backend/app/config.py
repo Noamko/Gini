@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     # Telegram
     telegram_bot_token: str = ""
+    telegram_allowed_users: str = ""  # comma-separated Telegram user IDs
 
     # App settings (loaded from settings.yaml)
     app_name: str = "Gini"

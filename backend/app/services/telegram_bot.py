@@ -103,10 +103,23 @@ class TelegramBot:
 
     # ── Message router ──────────────────────────────────────────────
 
+    def _is_allowed(self, user_id: int) -> bool:
+        """Check if a Telegram user is allowed to use the bot."""
+        allowed = settings.telegram_allowed_users.strip()
+        if not allowed:
+            return True  # no restriction if not configured
+        allowed_ids = {int(uid.strip()) for uid in allowed.split(",") if uid.strip()}
+        return user_id in allowed_ids
+
     async def _handle_message(self, message: dict):
         chat_id = message["chat"]["id"]
         text = message["text"].strip()
         user_name = message["from"].get("first_name", "User")
+        user_id = message["from"].get("id")
+
+        if not self._is_allowed(user_id):
+            await self._send_message(chat_id, "Access denied. Your Telegram account is not authorized to use this bot.")
+            return
 
         await logger.ainfo("telegram_message", chat_id=chat_id, user=user_name, text=text[:100])
 
@@ -343,6 +356,10 @@ class TelegramBot:
         chat_id = message["chat"]["id"]
         user_name = message["from"].get("first_name", "User")
 
+        if not self._is_allowed(message["from"].get("id")):
+            await self._send_message(chat_id, "Access denied.")
+            return
+
         voice = message.get("voice") or message.get("audio")
         if not voice:
             return
@@ -396,6 +413,11 @@ class TelegramBot:
         """Handle photos and documents — describe the file to the agent."""
         chat_id = message["chat"]["id"]
         user_name = message["from"].get("first_name", "User")
+
+        if not self._is_allowed(message["from"].get("id")):
+            await self._send_message(chat_id, "Access denied.")
+            return
+
         caption = message.get("caption", "")
 
         if "photo" in message:
