@@ -6,6 +6,7 @@ from app.tools.run_shell import RunShellTool
 from app.tools.web_fetch import WebFetchTool
 from app.tools.delegate_task import DelegateTaskTool
 from app.tools.send_telegram import SendTelegramTool, SendTelegramPhotoTool, SendTelegramMediaGroupTool
+from app.tools.cache import CacheSetTool, CacheGetTool, CacheDeleteTool, CacheListTool
 
 # All built-in tools
 BUILTIN_TOOLS: list[BaseTool] = [
@@ -17,6 +18,10 @@ BUILTIN_TOOLS: list[BaseTool] = [
     SendTelegramTool(),
     SendTelegramPhotoTool(),
     SendTelegramMediaGroupTool(),
+    CacheSetTool(),
+    CacheGetTool(),
+    CacheDeleteTool(),
+    CacheListTool(),
 ]
 
 _tools_by_name: dict[str, BaseTool] = {t.name: t for t in BUILTIN_TOOLS}
