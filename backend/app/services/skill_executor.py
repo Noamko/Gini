@@ -87,11 +87,24 @@ async def get_assembled_prompt(agent: Agent) -> str:
     return full_prompt
 
 
+AUTONOMOUS_DIRECTIVE = """
+
+## Execution Rules
+You are running autonomously without a human in the loop. Follow these rules strictly:
+- NEVER ask questions or request clarification. Act with the information you have.
+- If you are missing information, make your best guess or use defaults.
+- If a task cannot be completed, explain what failed and why in your response.
+- Execute all steps yourself using the tools available to you.
+- Do not suggest manual steps for the user to do — do everything yourself.
+- Be concise in your final response — report what you did and the result.
+"""
+
+
 async def get_assembled_prompt_with_credentials(agent: Agent) -> str:
     """Get assembled prompt with decrypted credential values injected. For background runs only."""
     skills = await get_agent_skills(agent.id)
     if not skills:
-        return agent.system_prompt
+        return agent.system_prompt + AUTONOMOUS_DIRECTIVE
 
     # Decrypt all credentials from assigned skills
     decrypted: dict[str, str] = {}
@@ -104,7 +117,7 @@ async def get_assembled_prompt_with_credentials(agent: Agent) -> str:
                     await logger.aerror("credential_decrypt_error", credential=c.name, error=str(e))
 
     skill_context = build_skill_context(skills, inject_credentials=True, decrypted_creds=decrypted)
-    return agent.system_prompt + skill_context
+    return agent.system_prompt + skill_context + AUTONOMOUS_DIRECTIVE
 
 
 async def invalidate_prompt_cache(agent_id: UUID) -> None:
