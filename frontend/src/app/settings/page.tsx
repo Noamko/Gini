@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { api } from "@/lib/api-client";
-import { Plus, Pencil, Trash2, KeyRound, Eye, EyeOff, Settings, CheckCircle, XCircle, Save, RefreshCw, Download, Upload } from "lucide-react";
+import { Plus, Pencil, Trash2, KeyRound, Eye, EyeOff, Settings, CheckCircle, XCircle, Save, RefreshCw, Download, Upload, DollarSign } from "lucide-react";
 
 interface Credential {
   id: string;
@@ -43,6 +43,9 @@ export default function SettingsPage() {
   // Models
   const [models, setModels] = useState<ModelOption[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
+
+  // Pricing
+  const [pricing, setPricing] = useState<{ id: string; provider: string; input_per_1m: number; output_per_1m: number }[]>([]);
 
   // Credentials
   const [credentials, setCredentials] = useState<Credential[]>([]);
@@ -89,11 +92,19 @@ export default function SettingsPage() {
     setLoading(false);
   }, []);
 
+  const loadPricing = useCallback(async () => {
+    try {
+      const data = await fetch(`${process.env.NEXT_PUBLIC_API_URL || (typeof window !== "undefined" ? `http://${window.location.hostname}:8000` : "http://localhost:8000")}/api/pricing`).then(r => r.json());
+      setPricing(data.models);
+    } catch {}
+  }, []);
+
   useEffect(() => {
     loadSettings();
     loadModels();
     loadCredentials();
-  }, [loadSettings, loadModels, loadCredentials]);
+    loadPricing();
+  }, [loadSettings, loadModels, loadCredentials, loadPricing]);
 
   const handleSaveSettings = async () => {
     setSaving(true);
@@ -367,6 +378,45 @@ export default function SettingsPage() {
                 ))}
               </div>
             )}
+          </section>
+
+          {/* Model Pricing */}
+          <section className="space-y-4">
+            <h2 className="text-sm font-medium text-zinc-400 uppercase tracking-wider">Model Pricing</h2>
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 overflow-hidden">
+              <p className="text-xs text-zinc-500 px-4 pt-4 pb-2">
+                Per 1M tokens (USD). Costs tracked locally for Gini usage only.
+              </p>
+              {["anthropic", "openai"].map((provider) => {
+                const models = pricing.filter((m) => m.provider === provider);
+                if (models.length === 0) return null;
+                return (
+                  <div key={provider}>
+                    <div className="px-4 py-2 bg-zinc-800/50">
+                      <span className="text-xs font-medium text-zinc-300 uppercase">{provider}</span>
+                    </div>
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-zinc-500 border-b border-zinc-800">
+                          <th className="text-left px-4 py-2 font-medium">Model</th>
+                          <th className="text-right px-4 py-2 font-medium">Input</th>
+                          <th className="text-right px-4 py-2 font-medium">Output</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {models.map((m) => (
+                          <tr key={m.id} className="border-b border-zinc-800/50 hover:bg-zinc-800/20">
+                            <td className="px-4 py-1.5 font-mono text-zinc-300">{m.id}</td>
+                            <td className="px-4 py-1.5 text-right text-zinc-400">${m.input_per_1m.toFixed(2)}</td>
+                            <td className="px-4 py-1.5 text-right text-zinc-400">${m.output_per_1m.toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })}
+            </div>
           </section>
 
           {/* Backup & Restore */}

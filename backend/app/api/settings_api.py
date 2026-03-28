@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.config import settings
 from app.dependencies import redis_client
+from app.services.cost_tracker import MODEL_PRICING
 
 router = APIRouter(tags=["settings"])
 
@@ -56,3 +57,19 @@ async def update_settings(body: SettingsUpdate) -> AppSettings:
         settings.default_max_tokens = body.default_max_tokens
 
     return await get_settings()
+
+
+@router.get("/api/pricing")
+async def get_pricing():
+    """Return model pricing table."""
+    models = []
+    for model_id, (input_price, output_price) in MODEL_PRICING.items():
+        provider = "anthropic" if model_id.startswith("claude") else "openai"
+        models.append({
+            "id": model_id,
+            "provider": provider,
+            "input_per_1m": float(input_price),
+            "output_per_1m": float(output_price),
+        })
+    models.sort(key=lambda m: (m["provider"], -m["input_per_1m"]))
+    return {"models": models}
