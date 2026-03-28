@@ -140,8 +140,10 @@ async def chat_websocket(websocket: WebSocket, conversation_id: UUID):
                     user_msg = "Rate limit reached. Please wait a moment and try again."
                 elif "authentication" in error_str.lower() or "401" in error_str:
                     user_msg = "API key is invalid or expired. Check your settings."
+                elif "credit balance" in error_str.lower() or "billing" in error_str.lower():
+                    user_msg = "API credits exhausted. Please top up your account."
                 else:
-                    user_msg = "Something went wrong processing your message. Please try again."
+                    user_msg = error_str[:500]
                 await websocket.send_json({"type": "error", "message": user_msg})
 
     except Exception as e:
