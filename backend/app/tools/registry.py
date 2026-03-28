@@ -5,7 +5,7 @@ from app.tools.write_file import WriteFileTool
 from app.tools.run_shell import RunShellTool
 from app.tools.web_fetch import WebFetchTool
 from app.tools.delegate_task import DelegateTaskTool
-from app.tools.send_telegram import SendTelegramTool
+from app.tools.send_telegram import SendTelegramTool, SendTelegramPhotoTool, SendTelegramMediaGroupTool
 
 # All built-in tools
 BUILTIN_TOOLS: list[BaseTool] = [
@@ -15,6 +15,8 @@ BUILTIN_TOOLS: list[BaseTool] = [
     WebFetchTool(),
     DelegateTaskTool(),
     SendTelegramTool(),
+    SendTelegramPhotoTool(),
+    SendTelegramMediaGroupTool(),
 ]
 
 _tools_by_name: dict[str, BaseTool] = {t.name: t for t in BUILTIN_TOOLS}
