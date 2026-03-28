@@ -149,13 +149,53 @@ class LLMGateway:
             stop_reason=response.stop_reason,
         )
 
+    def _convert_messages_for_openai(self, messages: list[dict]) -> list[dict]:
+        """Convert Anthropic-style tool_use/tool_result messages to OpenAI format."""
+        converted = []
+        for msg in messages:
+            if msg["role"] == "assistant" and isinstance(msg.get("content"), list):
+                # Anthropic format: content is a list of blocks (text, tool_use)
+                text_parts = []
+                tool_calls = []
+                for block in msg["content"]:
+                    if block.get("type") == "text":
+                        text_parts.append(block["text"])
+                    elif block.get("type") == "tool_use":
+                        tool_calls.append({
+                            "id": block["id"],
+                            "type": "function",
+                            "function": {
+                                "name": block["name"],
+                                "arguments": json.dumps(block.get("input", {})),
+                            },
+                        })
+                openai_msg = {"role": "assistant", "content": "\n".join(text_parts) if text_parts else None}
+                if tool_calls:
+                    openai_msg["tool_calls"] = tool_calls
+                converted.append(openai_msg)
+            elif msg["role"] == "user" and isinstance(msg.get("content"), list):
+                # Anthropic format: tool_result blocks
+                for block in msg["content"]:
+                    if block.get("type") == "tool_result":
+                        converted.append({
+                            "role": "tool",
+                            "tool_call_id": block["tool_use_id"],
+                            "content": block.get("content", ""),
+                        })
+                    else:
+                        converted.append(msg)
+                        break
+            else:
+                converted.append(msg)
+        return converted
+
     async def _call_openai(
         self, messages, system_prompt, tools, model, temperature, max_tokens, start
     ) -> LLMResponse:
         openai_messages = []
         if system_prompt:
             openai_messages.append({"role": "system", "content": system_prompt})
-        openai_messages.extend(messages)
+        openai_messages.extend(self._convert_messages_for_openai(messages))
 
         # Newer OpenAI models (gpt-5.x, o1, o3, o4, gpt-4.1) use max_completion_tokens
         uses_new_param = any(model.startswith(p) for p in ("gpt-5", "gpt-4.1", "o1", "o3", "o4"))
