@@ -285,7 +285,7 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
             steps.append({
                 "type": "llm_call",
                 "round": round_num,
-                "content_length": len(response.content or ""),
+                "content": (response.content or "")[:1000],
                 "tool_calls": len(response.tool_calls) if response.tool_calls else 0,
                 "tokens": response.input_tokens + response.output_tokens,
             })
@@ -344,8 +344,10 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
                 steps.append({
                     "type": "tool_call",
                     "tool": tc["name"],
+                    "arguments": tc["arguments"],
                     "success": tool_result.success,
-                    "output_length": len(tool_result.output),
+                    "output": (tool_result.output or "")[:2000],
+                    "error": tool_result.error,
                 })
 
             messages.append({"role": "user", "content": tool_results_content})

@@ -157,19 +157,48 @@ function RunCard({ run, expanded, onToggle, onRetry, onStop, onPause, onResume }
           {run.steps.length > 0 && (
             <div>
               <p className="text-[11px] text-zinc-500 mb-1">Steps</p>
-              <div className="space-y-1">
+              <div className="space-y-2">
                 {run.steps.map((step, i) => (
-                  <div key={i} className="flex items-center gap-2 text-[11px]">
-                    <span className={`w-2 h-2 rounded-full ${
-                      step.type === "llm_call" ? "bg-blue-400" :
-                      step.success === false ? "bg-red-400" : "bg-emerald-400"
-                    }`} />
-                    <span className="text-zinc-400">
-                      {step.type === "llm_call"
-                        ? `LLM round ${step.round} → ${step.tool_calls} tool calls`
-                        : `${step.tool} → ${step.success ? "ok" : "failed"}`
-                      }
-                    </span>
+                  <div key={i} className={`rounded-lg border p-2 ${
+                    step.type === "llm_call" ? "border-blue-900/30 bg-blue-950/10" :
+                    step.success === false ? "border-red-900/30 bg-red-950/10" : "border-zinc-800 bg-zinc-900/30"
+                  }`}>
+                    <div className="flex items-center gap-2 text-[11px]">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${
+                        step.type === "llm_call" ? "bg-blue-400" :
+                        step.success === false ? "bg-red-400" : "bg-emerald-400"
+                      }`} />
+                      <span className="text-zinc-300 font-medium">
+                        {step.type === "llm_call"
+                          ? `LLM round ${step.round} → ${step.tool_calls} tool calls · ${step.tokens} tok`
+                          : `${step.tool} → ${step.success ? "ok" : "failed"}`
+                        }
+                      </span>
+                    </div>
+                    {/* LLM thinking */}
+                    {step.type === "llm_call" && step.content && (
+                      <p className="text-[11px] text-zinc-500 mt-1 pl-4 italic line-clamp-2">{step.content}</p>
+                    )}
+                    {/* Tool command/args */}
+                    {step.type === "tool_call" && step.arguments && (
+                      <pre className="text-[11px] text-zinc-400 mt-1 pl-4 font-mono truncate">
+                        {step.tool === "run_shell" ? `$ ${step.arguments.command || ""}` :
+                         step.tool === "web_fetch" ? `${step.arguments.method || "GET"} ${step.arguments.url || ""}` :
+                         step.tool === "write_file" ? `Write ${step.arguments.path || ""}` :
+                         step.tool === "read_file" ? `Read ${step.arguments.path || ""}` :
+                         JSON.stringify(step.arguments).slice(0, 120)}
+                      </pre>
+                    )}
+                    {/* Tool output */}
+                    {step.type === "tool_call" && step.output && (
+                      <pre className="text-[11px] text-zinc-500 mt-1 pl-4 font-mono max-h-16 overflow-hidden whitespace-pre-wrap">
+                        {step.output.slice(0, 300)}
+                      </pre>
+                    )}
+                    {/* Tool error */}
+                    {step.type === "tool_call" && step.error && (
+                      <p className="text-[11px] text-red-400 mt-1 pl-4">{step.error}</p>
+                    )}
                   </div>
                 ))}
               </div>
