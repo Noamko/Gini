@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_db, redis_client
 from app.models.agent import Agent
 from app.models.event import Event
-from app.models.message import Message
+from app.models.execution_log import ExecutionLog
 from app.services.agent_orchestrator import (
     DASHBOARD_CHANNEL,
     get_all_agent_states,
@@ -47,17 +47,17 @@ async def dashboard_agents(db: AsyncSession = Depends(get_db)):
 
 @router.get("/api/dashboard/costs")
 async def dashboard_costs(db: AsyncSession = Depends(get_db)):
-    """Get cost summary."""
+    """Get cost summary from execution logs (single source of truth)."""
     result = await db.execute(
         select(
-            func.count(Message.id).label("total_messages"),
-            func.sum(Message.token_count).label("total_tokens"),
-            func.sum(Message.cost_usd).label("total_cost"),
-        ).where(Message.role == "assistant")
+            func.count(func.distinct(ExecutionLog.trace_id)).label("total_traces"),
+            func.sum(ExecutionLog.input_tokens + ExecutionLog.output_tokens).label("total_tokens"),
+            func.sum(ExecutionLog.cost_usd).label("total_cost"),
+        )
     )
     row = result.one()
     return {
-        "total_messages": row.total_messages or 0,
+        "total_messages": row.total_traces or 0,
         "total_tokens": int(row.total_tokens or 0),
         "total_cost": float(row.total_cost or 0),
     }
