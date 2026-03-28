@@ -18,7 +18,7 @@ router = APIRouter(prefix="/api/schedules", tags=["schedules"])
 @router.get("")
 async def list_schedules(db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Schedule).options(selectinload(Schedule.agent)).order_by(Schedule.created_at.desc())
+        select(Schedule).options(selectinload(Schedule.agent), selectinload(Schedule.workflow)).order_by(Schedule.created_at.desc())
     )
     schedules = result.scalars().all()
     return {"items": [ScheduleResponse.from_orm_model(s) for s in schedules]}
@@ -27,7 +27,7 @@ async def list_schedules(db: AsyncSession = Depends(get_db)):
 @router.get("/{schedule_id}")
 async def get_schedule(schedule_id: UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Schedule).options(selectinload(Schedule.agent)).where(Schedule.id == schedule_id)
+        select(Schedule).options(selectinload(Schedule.agent), selectinload(Schedule.workflow)).where(Schedule.id == schedule_id)
     )
     schedule = result.scalar_one_or_none()
     if not schedule:
@@ -37,9 +37,17 @@ async def get_schedule(schedule_id: UUID, db: AsyncSession = Depends(get_db)):
 
 @router.post("", status_code=201)
 async def create_schedule(body: ScheduleCreate, db: AsyncSession = Depends(get_db)):
-    agent = await db.get(Agent, body.agent_id)
-    if not agent:
-        raise HTTPException(404, "Agent not found")
+    if not body.agent_id and not body.workflow_id:
+        raise HTTPException(400, "Either agent_id or workflow_id is required")
+    if body.agent_id:
+        agent = await db.get(Agent, body.agent_id)
+        if not agent:
+            raise HTTPException(404, "Agent not found")
+    if body.workflow_id:
+        from app.models.workflow import Workflow
+        wf = await db.get(Workflow, body.workflow_id)
+        if not wf:
+            raise HTTPException(404, "Workflow not found")
 
     next_run = compute_next_run(body.cron_expression)
     if next_run is None:
@@ -47,6 +55,7 @@ async def create_schedule(body: ScheduleCreate, db: AsyncSession = Depends(get_d
 
     schedule = Schedule(
         agent_id=body.agent_id,
+        workflow_id=body.workflow_id,
         name=body.name,
         cron_expression=body.cron_expression,
         instructions=body.instructions,
@@ -55,14 +64,14 @@ async def create_schedule(body: ScheduleCreate, db: AsyncSession = Depends(get_d
     )
     db.add(schedule)
     await db.commit()
-    await db.refresh(schedule, ["agent"])
+    await db.refresh(schedule, ["agent", "workflow"])
     return ScheduleResponse.from_orm_model(schedule)
 
 
 @router.put("/{schedule_id}")
 async def update_schedule(schedule_id: UUID, body: ScheduleUpdate, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
-        select(Schedule).options(selectinload(Schedule.agent)).where(Schedule.id == schedule_id)
+        select(Schedule).options(selectinload(Schedule.agent), selectinload(Schedule.workflow)).where(Schedule.id == schedule_id)
     )
     schedule = result.scalar_one_or_none()
     if not schedule:
@@ -82,7 +91,7 @@ async def update_schedule(schedule_id: UUID, body: ScheduleUpdate, db: AsyncSess
         schedule.next_run_at = next_run
 
     await db.commit()
-    await db.refresh(schedule, ["agent"])
+    await db.refresh(schedule, ["agent", "workflow"])
     return ScheduleResponse.from_orm_model(schedule)
 
 

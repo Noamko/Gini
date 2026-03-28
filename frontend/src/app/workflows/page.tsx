@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { api } from "@/lib/api-client";
 import {
-  Plus, Trash2, Bot, Play, Pencil, X, ArrowDown, GitBranch, ChevronDown, ChevronUp,
+  Plus, Trash2, Bot, Play, Pencil, X, ArrowDown, GitBranch, ChevronDown, ChevronUp, Loader2,
 } from "lucide-react";
 
 interface WorkflowStep {
@@ -26,6 +27,7 @@ interface WorkflowItem {
 interface AgentOption { id: string; name: string; }
 
 export default function WorkflowsPage() {
+  const router = useRouter();
   const [workflows, setWorkflows] = useState<WorkflowItem[]>([]);
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -93,8 +95,11 @@ export default function WorkflowsPage() {
     setRunning(w.id);
     try {
       await api.workflows.run(w.id);
-    } catch {}
-    setTimeout(() => setRunning(null), 2000);
+      router.push("/runs");
+    } catch (e: any) {
+      alert(`Failed to start: ${e.message}`);
+      setRunning(null);
+    }
   };
 
   const handleDelete = async (w: WorkflowItem) => {
@@ -222,7 +227,7 @@ export default function WorkflowsPage() {
                       <button onClick={() => handleRun(w)}
                         disabled={running === w.id}
                         className="p-1.5 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-emerald-400 transition-colors disabled:text-emerald-400">
-                        <Play size={14} />
+                        {running === w.id ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
                       </button>
                       <button onClick={() => openEdit(w)}
                         className="p-1.5 rounded-lg hover:bg-zinc-800 text-zinc-500 hover:text-zinc-300">

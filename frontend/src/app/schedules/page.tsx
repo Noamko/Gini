@@ -4,13 +4,15 @@ import { useEffect, useState, useCallback } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { api } from "@/lib/api-client";
 import {
-  Plus, Trash2, Clock, Bot, ToggleLeft, ToggleRight, Pencil, X, CalendarClock,
+  Plus, Trash2, Clock, Bot, ToggleLeft, ToggleRight, Pencil, X, CalendarClock, GitBranch,
 } from "lucide-react";
 
 interface Schedule {
   id: string;
-  agent_id: string;
-  agent_name: string;
+  agent_id: string | null;
+  agent_name: string | null;
+  workflow_id: string | null;
+  workflow_name: string | null;
   name: string;
   cron_expression: string;
   instructions: string | null;
@@ -21,6 +23,11 @@ interface Schedule {
 }
 
 interface AgentOption {
+  id: string;
+  name: string;
+}
+
+interface WorkflowOption {
   id: string;
   name: string;
 }
@@ -44,25 +51,30 @@ function formatTime(iso: string | null): string {
 export default function SchedulesPage() {
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [agents, setAgents] = useState<AgentOption[]>([]);
+  const [workflows, setWorkflows] = useState<WorkflowOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Schedule | null>(null);
 
   // Form state
   const [name, setName] = useState("");
+  const [targetType, setTargetType] = useState<"agent" | "workflow">("agent");
   const [agentId, setAgentId] = useState("");
+  const [workflowId, setWorkflowId] = useState("");
   const [cron, setCron] = useState("0 8 * * *");
   const [instructions, setInstructions] = useState("");
   const [saving, setSaving] = useState(false);
 
   const loadSchedules = useCallback(async () => {
     try {
-      const [schedData, agentData] = await Promise.all([
+      const [schedData, agentData, wfData] = await Promise.all([
         api.schedules.list(),
         api.agents.list(),
+        api.workflows.list(),
       ]);
       setSchedules(schedData.items);
       setAgents(agentData.items.map((a: any) => ({ id: a.id, name: a.name })));
+      setWorkflows(wfData.items.map((w: any) => ({ id: w.id, name: w.name })));
     } catch {}
     setLoading(false);
   }, []);
@@ -72,18 +84,17 @@ export default function SchedulesPage() {
   }, [loadSchedules]);
 
   const resetForm = () => {
-    setName("");
-    setAgentId("");
-    setCron("0 8 * * *");
-    setInstructions("");
-    setShowForm(false);
-    setEditing(null);
+    setName(""); setAgentId(""); setWorkflowId(""); setTargetType("agent");
+    setCron("0 8 * * *"); setInstructions("");
+    setShowForm(false); setEditing(null);
   };
 
   const openEdit = (s: Schedule) => {
     setEditing(s);
     setName(s.name);
-    setAgentId(s.agent_id);
+    setTargetType(s.workflow_id ? "workflow" : "agent");
+    setAgentId(s.agent_id || "");
+    setWorkflowId(s.workflow_id || "");
     setCron(s.cron_expression);
     setInstructions(s.instructions || "");
     setShowForm(true);
@@ -98,7 +109,9 @@ export default function SchedulesPage() {
         });
       } else {
         await api.schedules.create({
-          agent_id: agentId, name, cron_expression: cron, instructions: instructions || null,
+          agent_id: targetType === "agent" ? agentId : undefined,
+          workflow_id: targetType === "workflow" ? workflowId : undefined,
+          name, cron_expression: cron, instructions: instructions || null,
         });
       }
       resetForm();
@@ -157,14 +170,31 @@ export default function SchedulesPage() {
                 </div>
                 {!editing && (
                   <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-zinc-400">Agent</label>
-                    <select value={agentId} onChange={(e) => setAgentId(e.target.value)}
-                      className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-500">
-                      <option value="">Select an agent...</option>
-                      {agents.map((a) => (
-                        <option key={a.id} value={a.id}>{a.name}</option>
-                      ))}
-                    </select>
+                    <label className="text-xs font-medium text-zinc-400">Target</label>
+                    <div className="flex gap-2">
+                      <select value={targetType} onChange={(e) => setTargetType(e.target.value as "agent" | "workflow")}
+                        className="bg-zinc-800 border border-zinc-700 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-500">
+                        <option value="agent">Agent</option>
+                        <option value="workflow">Workflow</option>
+                      </select>
+                      {targetType === "agent" ? (
+                        <select value={agentId} onChange={(e) => setAgentId(e.target.value)}
+                          className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-500">
+                          <option value="">Select an agent...</option>
+                          {agents.map((a) => (
+                            <option key={a.id} value={a.id}>{a.name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <select value={workflowId} onChange={(e) => setWorkflowId(e.target.value)}
+                          className="flex-1 bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-500">
+                          <option value="">Select a workflow...</option>
+                          {workflows.map((w) => (
+                            <option key={w.id} value={w.id}>{w.name}</option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -200,7 +230,7 @@ export default function SchedulesPage() {
                   Cancel
                 </button>
                 <button onClick={handleSave}
-                  disabled={saving || !name || (!editing && !agentId) || !cron}
+                  disabled={saving || !name || (!editing && !agentId && !workflowId) || !cron}
                   className="px-4 py-2 rounded-lg text-sm bg-violet-600 hover:bg-violet-500 disabled:bg-zinc-700 disabled:text-zinc-500 transition-colors">
                   {saving ? "Saving..." : editing ? "Update" : "Create"}
                 </button>
@@ -238,7 +268,7 @@ export default function SchedulesPage() {
                       </div>
                       <div className="flex items-center gap-3 text-[11px] text-zinc-500 mt-0.5">
                         <span className="flex items-center gap-1">
-                          <Bot size={10} /> {s.agent_name}
+                          {s.workflow_name ? <><GitBranch size={10} /> {s.workflow_name}</> : <><Bot size={10} /> {s.agent_name}</>}
                         </span>
                         {s.instructions && (
                           <span className="truncate max-w-[200px]">{s.instructions}</span>

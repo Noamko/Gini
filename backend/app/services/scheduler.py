@@ -59,31 +59,26 @@ class Scheduler:
             due_schedules = result.scalars().all()
 
             for schedule in due_schedules:
-                await logger.ainfo(
-                    "schedule_triggered",
-                    schedule_id=str(schedule.id),
-                    name=schedule.name,
-                    agent=schedule.agent.name if schedule.agent else "?",
-                )
-
-                # Create an agent run
-                run = AgentRun(
-                    agent_id=schedule.agent_id,
-                    instructions=schedule.instructions,
-                    status="pending",
-                )
-                db.add(run)
+                target = schedule.agent.name if schedule.agent else (f"workflow:{schedule.workflow_id}" if schedule.workflow_id else "?")
+                await logger.ainfo("schedule_triggered", schedule_id=str(schedule.id), name=schedule.name, target=target)
 
                 # Update schedule timestamps
                 schedule.last_run_at = now
                 schedule.next_run_at = compute_next_run(schedule.cron_expression, after=now)
-
                 await db.commit()
-                await db.refresh(run)
 
-                # Fire the background execution
-                from app.api.runs import _execute_run
-                asyncio.create_task(_execute_run(str(run.id), str(schedule.agent_id)))
+                if schedule.workflow_id:
+                    # Run workflow
+                    from app.api.workflows import _execute_workflow
+                    asyncio.create_task(_execute_workflow(str(schedule.workflow_id)))
+                elif schedule.agent_id:
+                    # Run agent
+                    run = AgentRun(agent_id=schedule.agent_id, instructions=schedule.instructions, status="pending")
+                    db.add(run)
+                    await db.commit()
+                    await db.refresh(run)
+                    from app.api.runs import _execute_run
+                    asyncio.create_task(_execute_run(str(run.id), str(schedule.agent_id)))
 
 
 scheduler = Scheduler()

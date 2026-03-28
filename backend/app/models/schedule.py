@@ -12,8 +12,11 @@ from app.models.base import Base, TimestampMixin, UUIDMixin
 class Schedule(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "schedules"
 
-    agent_id: Mapped[UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
+    agent_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("agents.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    workflow_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="CASCADE"), nullable=True, index=True
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     cron_expression: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -23,3 +26,4 @@ class Schedule(Base, UUIDMixin, TimestampMixin):
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     agent = relationship("Agent", lazy="selectin")
+    workflow = relationship("Workflow", lazy="selectin")

@@ -5,7 +5,8 @@ from pydantic import BaseModel
 
 
 class ScheduleCreate(BaseModel):
-    agent_id: UUID
+    agent_id: UUID | None = None
+    workflow_id: UUID | None = None
     name: str
     cron_expression: str
     instructions: str | None = None
@@ -21,8 +22,10 @@ class ScheduleUpdate(BaseModel):
 
 class ScheduleResponse(BaseModel):
     id: UUID
-    agent_id: UUID
-    agent_name: str
+    agent_id: UUID | None
+    agent_name: str | None
+    workflow_id: UUID | None
+    workflow_name: str | None
     name: str
     cron_expression: str
     instructions: str | None
@@ -39,7 +42,9 @@ class ScheduleResponse(BaseModel):
         return cls(
             id=schedule.id,
             agent_id=schedule.agent_id,
-            agent_name=schedule.agent.name if schedule.agent else "Unknown",
+            agent_name=schedule.agent.name if schedule.agent else None,
+            workflow_id=schedule.workflow_id,
+            workflow_name=schedule.workflow.name if schedule.workflow else None,
             name=schedule.name,
             cron_expression=schedule.cron_expression,
             instructions=schedule.instructions,
