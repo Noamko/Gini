@@ -40,19 +40,21 @@ def build_skill_context(skills: list[Skill], inject_credentials: bool = False, d
     if not skills:
         return ""
 
-    lines = ["\n\n## Available Skills\n"]
+    lines = ["\n\n## Assigned Skills (MANDATORY)\n"]
+    lines.append("You MUST use the following skills when performing related tasks.")
+    lines.append("Follow each skill's instructions exactly. Do NOT use alternative approaches.\n")
     for skill in skills:
-        lines.append(f"### {skill.name}")
+        lines.append(f"### SKILL: {skill.name}")
         if skill.description:
-            lines.append(skill.description)
+            lines.append(f"Purpose: {skill.description}")
         if skill.instructions:
-            lines.append(f"Instructions: {skill.instructions}")
+            lines.append(f"REQUIRED approach:\n{skill.instructions}")
         if skill.tools:
             tool_names = [t.name for t in skill.tools]
-            lines.append(f"Tools: {', '.join(tool_names)}")
+            lines.append(f"Required tools: {', '.join(tool_names)}")
         if skill.credentials:
             if inject_credentials and decrypted_creds:
-                lines.append("Credentials:")
+                lines.append("Credentials (use these exact values):")
                 for c in skill.credentials:
                     val = decrypted_creds.get(c.name)
                     if val:
@@ -61,7 +63,7 @@ def build_skill_context(skills: list[Skill], inject_credentials: bool = False, d
                         lines.append(f"  - {c.name} ({c.credential_type}): [not available]")
             else:
                 cred_names = [c.name for c in skill.credentials]
-                lines.append(f"Credentials available: {', '.join(cred_names)}")
+                lines.append(f"Available credentials: {', '.join(cred_names)}")
         lines.append("")
 
     return "\n".join(lines)
