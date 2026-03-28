@@ -1,14 +1,18 @@
 from decimal import Decimal
 
 # Prices per 1M tokens (input, output) in USD
+# Sources:
+#   Anthropic: https://platform.claude.com/docs/en/docs/about-claude/models (verified 2026-03-28)
+#   OpenAI: https://openai.com/api/pricing/ (verified 2026-03-28)
+
 MODEL_PRICING: dict[str, tuple[Decimal, Decimal]] = {
-    # Anthropic — Claude 4.6
-    "claude-opus-4-6": (Decimal("15.00"), Decimal("75.00")),
+    # Anthropic — Claude 4.6 (latest)
+    "claude-opus-4-6": (Decimal("5.00"), Decimal("25.00")),
     "claude-sonnet-4-6": (Decimal("3.00"), Decimal("15.00")),
     # Anthropic — Claude 4.5
-    "claude-opus-4-5": (Decimal("15.00"), Decimal("75.00")),
+    "claude-opus-4-5": (Decimal("5.00"), Decimal("25.00")),
     "claude-sonnet-4-5": (Decimal("3.00"), Decimal("15.00")),
-    "claude-haiku-4-5": (Decimal("0.80"), Decimal("4.00")),
+    "claude-haiku-4-5": (Decimal("1.00"), Decimal("5.00")),
     # Anthropic — Claude 4.1
     "claude-opus-4-1": (Decimal("15.00"), Decimal("75.00")),
     # Anthropic — Claude 4
@@ -17,15 +21,14 @@ MODEL_PRICING: dict[str, tuple[Decimal, Decimal]] = {
     # Anthropic — Claude 3.5
     "claude-3-5-sonnet": (Decimal("3.00"), Decimal("15.00")),
     "claude-3-5-haiku": (Decimal("0.80"), Decimal("4.00")),
-    # Anthropic — Claude 3
+    # Anthropic — Claude 3 (deprecated)
     "claude-3-opus": (Decimal("15.00"), Decimal("75.00")),
     "claude-3-sonnet": (Decimal("3.00"), Decimal("15.00")),
     "claude-3-haiku": (Decimal("0.25"), Decimal("1.25")),
     # OpenAI — GPT-5.4
-    "gpt-5.4-pro": (Decimal("30.00"), Decimal("120.00")),
-    "gpt-5.4": (Decimal("10.00"), Decimal("40.00")),
-    "gpt-5.4-mini": (Decimal("1.50"), Decimal("6.00")),
-    "gpt-5.4-nano": (Decimal("0.50"), Decimal("2.00")),
+    "gpt-5.4": (Decimal("2.50"), Decimal("15.00")),
+    "gpt-5.4-mini": (Decimal("0.75"), Decimal("4.50")),
+    "gpt-5.4-nano": (Decimal("0.20"), Decimal("1.25")),
     # OpenAI — GPT-5.2
     "gpt-5.2-pro": (Decimal("30.00"), Decimal("120.00")),
     "gpt-5.2": (Decimal("10.00"), Decimal("40.00")),
@@ -61,7 +64,7 @@ MODEL_PRICING: dict[str, tuple[Decimal, Decimal]] = {
 def calculate_cost(model: str, input_tokens: int, output_tokens: int) -> Decimal:
     pricing = MODEL_PRICING.get(model)
     if not pricing:
-        # Try prefix match for dated variants (e.g. gpt-5.4-pro-2026-03-05 → gpt-5.4-pro)
+        # Try prefix match for dated variants (e.g. gpt-5.4-2026-03-05 → gpt-5.4)
         for key, val in MODEL_PRICING.items():
             if model.startswith(key):
                 pricing = val
