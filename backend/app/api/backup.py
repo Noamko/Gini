@@ -42,7 +42,6 @@ async def export_backup(db: AsyncSession = Depends(get_db)):
             "max_tokens": a.max_tokens,
             "is_main": a.is_main,
             "is_active": a.is_active,
-            "use_memory": a.use_memory,
             "auto_approve": a.auto_approve,
             "daily_budget_usd": a.daily_budget_usd,
             "metadata": a.metadata_,
