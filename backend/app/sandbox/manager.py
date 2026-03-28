@@ -8,7 +8,7 @@ logger = structlog.get_logger("sandbox")
 SANDBOX_IMAGE = "gini-sandbox:latest"
 CONTAINER_PREFIX = "gini-sandbox-"
 DEFAULT_TIMEOUT = 30
-DEFAULT_MEM_LIMIT = "256m"
+DEFAULT_MEM_LIMIT = "512m"
 DEFAULT_CPU_PERIOD = 100000
 DEFAULT_CPU_QUOTA = 50000  # 50% of one CPU
 
@@ -76,9 +76,8 @@ class SandboxManager:
             "--memory", mem_limit,
             "--cpu-period", str(DEFAULT_CPU_PERIOD),
             "--cpu-quota", str(DEFAULT_CPU_QUOTA),
-            "--read-only",
-            "--tmpfs", "/tmp:rw,noexec,size=64m",
-            "--tmpfs", "/workspace:rw,noexec,size=64m",
+            "--tmpfs", "/tmp:rw,size=128m",
+            "--tmpfs", "/workspace:rw,size=64m",
             "--security-opt", "no-new-privileges",
             SANDBOX_IMAGE,
             "bash", "-c", command,
