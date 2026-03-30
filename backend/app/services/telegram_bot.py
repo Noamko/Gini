@@ -457,7 +457,7 @@ class TelegramBot:
             await self._persist_message(conversation_id, role="user", content=text)
 
             tool_specs = get_llm_tool_specs()
-            response_text = await self._run_agent(agent, messages, system_prompt, tool_specs)
+            response_text = await self._run_agent(agent, messages, system_prompt, tool_specs, conversation_id=str(conversation_id))
 
             await self._persist_message(conversation_id, role="assistant", content=response_text)
             await self._send_long_message(chat_id, response_text)
@@ -469,7 +469,8 @@ class TelegramBot:
     # ── Agent loop ──────────────────────────────────────────────────
 
     async def _run_agent(
-        self, agent: Agent, messages: list[dict], system_prompt: str, tool_specs: list[dict]
+        self, agent: Agent, messages: list[dict], system_prompt: str, tool_specs: list[dict],
+        conversation_id: str | None = None,
     ) -> str:
         for round_num in range(MAX_TOOL_ROUNDS):
             response: LLMResponse = await llm_gateway.call_with_tools(
@@ -507,7 +508,7 @@ class TelegramBot:
                     sub_agent = await get_agent_by_name(sub_agent_name)
                     if sub_agent:
                         delegation_result = await run_sub_agent(
-                            agent=sub_agent, task=task, parent_conversation_id="telegram",
+                            agent=sub_agent, task=task, parent_conversation_id=conversation_id or "unknown",
                         )
                         tool_output = delegation_result.get("content", "No result")
                     else:
