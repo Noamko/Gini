@@ -499,8 +499,22 @@ class TelegramBot:
 
             tool_results = []
             for tc in response.tool_calls:
-                result = await execute_tool(tc["name"], tc["arguments"], use_sandbox=False)
-                tool_output = result.output if result.success else f"Error: {result.error}"
+                if tc["name"] == "delegate_task":
+                    # Handle delegation inline
+                    from app.services.agent_orchestrator import get_agent_by_name, run_sub_agent
+                    sub_agent_name = tc["arguments"].get("agent_name", "")
+                    task = tc["arguments"].get("task", "")
+                    sub_agent = await get_agent_by_name(sub_agent_name)
+                    if sub_agent:
+                        delegation_result = await run_sub_agent(
+                            agent=sub_agent, task=task, parent_conversation_id="telegram",
+                        )
+                        tool_output = delegation_result.get("content", "No result")
+                    else:
+                        tool_output = f"Error: Agent '{sub_agent_name}' not found."
+                else:
+                    result = await execute_tool(tc["name"], tc["arguments"], use_sandbox=False)
+                    tool_output = result.output if result.success else f"Error: {result.error}"
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tc["id"],
