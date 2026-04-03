@@ -20,7 +20,7 @@ from app.services.agent_orchestrator import (
     get_agent_by_name, run_sub_agent, set_agent_state,
     broadcast_dashboard_event, STATE_THINKING, STATE_IDLE, STATE_DELEGATING,
 )
-from app.tools.registry import get_llm_tool_specs, get_tool
+from app.tools.registry import get_all_tool_specs, get_tool
 from app.observability.trace import TraceBuilder
 
 logger = structlog.get_logger("chat")
@@ -123,7 +123,7 @@ async def chat_websocket(websocket: WebSocket, conversation_id: UUID):
 
             history.append({"role": "user", "content": user_content})
 
-            tool_specs = get_llm_tool_specs()
+            tool_specs = await get_all_tool_specs()
 
             # Get assembled prompt (inject credentials for auto-approve agents)
             prompt_fn = get_assembled_prompt_with_credentials if agent.auto_approve else get_assembled_prompt

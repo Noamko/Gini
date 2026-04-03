@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Plus, MessageSquare, Trash2, Bot, Settings, Zap, LayoutDashboard, Activity, Sun, Moon, Play, CalendarClock, Webhook, GitBranch, Menu, X, DollarSign } from "lucide-react";
+import { Plus, MessageSquare, Trash2, Bot, Settings, Zap, LayoutDashboard, Activity, Sun, Moon, Play, CalendarClock, Webhook, GitBranch, Menu, X, DollarSign, Wrench } from "lucide-react";
 import { useChatStore } from "@/stores/chatStore";
 import { useTheme } from "@/components/layout/ThemeProvider";
 import { cn } from "@/lib/utils";
@@ -16,6 +16,7 @@ const NAV_ITEMS = [
   { href: "/schedules", label: "Schedules", icon: CalendarClock },
   { href: "/webhooks", label: "Webhooks", icon: Webhook },
   { href: "/workflows", label: "Workflows", icon: GitBranch },
+  { href: "/tools", label: "Tools", icon: Wrench },
   { href: "/skills", label: "Skills", icon: Zap },
   { href: "/traces", label: "Traces", icon: Activity },
   { href: "/pricing", label: "Pricing", icon: DollarSign },

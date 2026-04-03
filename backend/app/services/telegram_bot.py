@@ -14,7 +14,7 @@ from app.models.message import Message
 from app.services.llm_gateway import llm_gateway, LLMResponse
 from app.services.skill_executor import get_assembled_prompt_with_credentials, get_assembled_prompt
 from app.services.tool_runner import execute_tool
-from app.tools.registry import get_llm_tool_specs
+from app.tools.registry import get_all_tool_specs
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 
@@ -456,7 +456,7 @@ class TelegramBot:
 
             await self._persist_message(conversation_id, role="user", content=text)
 
-            tool_specs = get_llm_tool_specs()
+            tool_specs = await get_all_tool_specs()
             response_text = await self._run_agent(agent, messages, system_prompt, tool_specs, conversation_id=str(conversation_id))
 
             await self._persist_message(conversation_id, role="assistant", content=response_text)

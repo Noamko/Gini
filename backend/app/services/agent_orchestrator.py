@@ -15,7 +15,7 @@ from app.models.agent import Agent
 from app.models.agent_run import AgentRun
 from app.services.llm_gateway import llm_gateway, LLMResponse
 from app.services.skill_executor import get_assembled_prompt_with_credentials
-from app.tools.registry import get_llm_tool_specs
+from app.tools.registry import get_all_tool_specs
 
 logger = structlog.get_logger("orchestrator")
 
@@ -115,7 +115,7 @@ async def run_sub_agent(
 
     system_prompt = await get_assembled_prompt_with_credentials(agent)
 
-    tool_specs = get_llm_tool_specs()
+    tool_specs = await get_all_tool_specs()
 
     messages = [{"role": "user", "content": task}]
 

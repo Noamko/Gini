@@ -16,3 +16,4 @@ class Tool(Base, UUIDMixin, TimestampMixin):
     requires_approval: Mapped[bool] = mapped_column(Boolean, default=False)
     is_builtin: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    code: Mapped[str | None] = mapped_column(Text, nullable=True)

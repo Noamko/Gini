@@ -10,7 +10,8 @@ from typing import Sequence, Union
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
-from pgvector.sqlalchemy import Vector
+# pgvector removed — memories feature was deleted
+# from pgvector.sqlalchemy import Vector
 
 # revision identifiers, used by Alembic.
 revision: str = 'a1b2c3d4e5f6'

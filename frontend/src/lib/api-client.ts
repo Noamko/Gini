@@ -68,6 +68,13 @@ export const api = {
       const data = await request<{ items: any[] }>("/api/tools");
       return data.items;
     },
+    get: (id: string) => request<any>(`/api/tools/${id}`),
+    create: (data: any) =>
+      request<any>("/api/tools", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: any) =>
+      request<any>(`/api/tools/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<void>(`/api/tools/${id}`, { method: "DELETE" }),
   },
   traces: {
     list: (params?: { conversation_id?: string; agent_name?: string; offset?: number; limit?: number }) => {

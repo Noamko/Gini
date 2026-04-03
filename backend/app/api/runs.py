@@ -20,7 +20,7 @@ from app.services.llm_gateway import llm_gateway, LLMResponse
 from app.services.skill_executor import get_assembled_prompt_with_credentials
 from app.services.tool_runner import execute_tool
 from app.services.agent_orchestrator import set_agent_state, STATE_THINKING, STATE_EXECUTING, STATE_IDLE, STATE_ERROR
-from app.tools.registry import get_llm_tool_specs
+from app.tools.registry import get_all_tool_specs
 
 logger = structlog.get_logger("runs")
 
@@ -226,7 +226,7 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
         instructions = run.instructions or f"You are {agent.name}. Execute your primary function and report the result."
         system_prompt = await get_assembled_prompt_with_credentials(agent)
 
-        tool_specs = get_llm_tool_specs()
+        tool_specs = await get_all_tool_specs()
         messages = [{"role": "user", "content": instructions}]
 
         total_input = 0

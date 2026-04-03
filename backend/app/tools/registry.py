@@ -38,5 +38,26 @@ def get_all_tools() -> list[BaseTool]:
 
 
 def get_llm_tool_specs() -> list[dict]:
-    """Get tool specs formatted for LLM API calls."""
-    return [t.to_llm_tool_spec() for t in BUILTIN_TOOLS if not t.requires_sandbox or True]
+    """Get tool specs formatted for LLM API calls (built-in only, sync)."""
+    return [t.to_llm_tool_spec() for t in BUILTIN_TOOLS]
+
+
+async def get_all_tool_specs() -> list[dict]:
+    """Get tool specs for ALL tools (built-in + active custom from DB)."""
+    specs = get_llm_tool_specs()
+
+    from app.dependencies import async_session
+    from app.models.tool import Tool
+    from sqlalchemy import select
+    async with async_session() as db:
+        result = await db.execute(
+            select(Tool).where(Tool.is_active == True).where(Tool.is_builtin == False).where(Tool.code.isnot(None))
+        )
+        for t in result.scalars().all():
+            specs.append({
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.parameters_schema,
+            })
+
+    return specs
