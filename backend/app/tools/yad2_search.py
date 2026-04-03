@@ -79,8 +79,14 @@ async def _scrape_yad2(city_code: str, max_price: int | None, min_rooms: int | N
                                     return null;
                                 }).filter(Boolean);
 
+                                const coords = addr.coords || item.coords || {};
+                                const lat = coords.lat || '';
+                                const lon = coords.lon || '';
+                                const listingId = item.id || item.token || '';
+                                const fullAddr = [addr.street?.text, addr.house?.number, addr.neighborhood?.text, addr.city?.text].filter(Boolean).join(', ');
+
                                 items.push({
-                                    listing_id: item.id || item.token || '',
+                                    listing_id: listingId,
                                     address: addr.street?.text || item.title_1 || '',
                                     house_number: addr.house?.number || '',
                                     neighborhood: addr.neighborhood?.text || item.title_2 || '',
@@ -90,7 +96,9 @@ async def _scrape_yad2(city_code: str, max_price: int | None, min_rooms: int | N
                                     floor: addr.house?.floor ?? item.floor ?? '',
                                     size: item.additionalDetails?.squareMeter || item.square_meters || '',
                                     image_urls: images.slice(0, 5),
-                                    listing_url: item.id ? 'https://www.yad2.co.il/realestate/item/' + item.id : '',
+                                    listing_url: listingId ? 'https://www.yad2.co.il/realestate/item/' + listingId : '',
+                                    google_maps_url: lat && lon ? `https://www.google.com/maps?q=${lat},${lon}` : (fullAddr ? `https://www.google.com/maps/search/${encodeURIComponent(fullAddr)}` : ''),
+                                    coordinates: lat && lon ? {lat, lon} : null,
                                 });
                             }
                         }
