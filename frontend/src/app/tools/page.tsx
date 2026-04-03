@@ -68,10 +68,8 @@ export default function ToolsPage() {
 
       if (editing) {
         await api.tools.update(editing.id, {
-          name: editing.is_builtin ? undefined : name,
-          description: editing.is_builtin ? undefined : description,
-          parameters_schema: editing.is_builtin ? undefined : schema,
-          code: editing.is_builtin ? undefined : code,
+          name, description, parameters_schema: schema,
+          code: code || undefined,
           requires_sandbox: requiresSandbox,
           requires_approval: requiresApproval,
         });
@@ -137,77 +135,65 @@ export default function ToolsPage() {
           {showForm && (
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold">{editing ? (editing.is_builtin ? `View: ${editing.name}` : "Edit Tool") : "Create Custom Tool"}</h2>
+                <h2 className="text-lg font-semibold">{editing ? `Edit: ${editing.name}` : "Create Custom Tool"}</h2>
                 <button onClick={resetForm} className="p-1.5 rounded-lg hover:bg-zinc-800 text-zinc-400"><X size={18} /></button>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-zinc-400">Name</label>
-                  <input value={name} onChange={(e) => setName(e.target.value)} disabled={editing?.is_builtin}
-                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-50"
+                  <input value={name} onChange={(e) => setName(e.target.value)}                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-50"
                     placeholder="my_custom_tool" />
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-zinc-400">Description</label>
-                  <input value={description} onChange={(e) => setDescription(e.target.value)} disabled={editing?.is_builtin}
-                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-50"
+                  <input value={description} onChange={(e) => setDescription(e.target.value)}                    className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-50"
                     placeholder="What does this tool do?" />
                 </div>
               </div>
 
               <div className="space-y-1.5">
                 <label className="text-xs font-medium text-zinc-400">Parameters Schema (JSON)</label>
-                <textarea value={paramsSchema} onChange={(e) => setParamsSchema(e.target.value)} disabled={editing?.is_builtin}
-                  rows={5}
+                <textarea value={paramsSchema} onChange={(e) => setParamsSchema(e.target.value)}                  rows={5}
                   className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs font-mono resize-none focus:outline-none focus:ring-1 focus:ring-violet-500 disabled:opacity-50" />
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-zinc-400">
-                  {editing?.is_builtin ? "Implementation (read-only)" : "Python Code"}
-                </label>
-                {editing?.is_builtin ? (
-                  <div className="space-y-2">
-                    <div className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs font-mono text-zinc-500">
-                      Built-in: {editing.implementation}
-                    </div>
-                    {!code && (
-                      <button
-                        onClick={async () => {
-                          try {
-                            const API_URL = typeof window !== "undefined"
-                              ? (window.location.port ? `http://${window.location.hostname}:8000` : window.location.origin)
-                              : "http://localhost:8000";
-                            const resp = await fetch(`${API_URL}/api/tools/${editing.id}/source`);
-                            if (resp.ok) {
-                              const data = await resp.json();
-                              setCode(data.source || "# Source not available");
-                            }
-                          } catch {}
-                        }}
-                        className="text-xs text-violet-400 hover:text-violet-300 transition-colors"
-                      >
-                        View source code
-                      </button>
-                    )}
-                    {code && (
-                      <pre className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-xs font-mono text-zinc-400 max-h-64 overflow-y-auto whitespace-pre-wrap">
-                        {code}
-                      </pre>
-                    )}
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-medium text-zinc-400">Python Code</label>
+                  {editing?.is_builtin && !code && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          const API_URL = typeof window !== "undefined"
+                            ? (window.location.port ? `http://${window.location.hostname}:8000` : window.location.origin)
+                            : "http://localhost:8000";
+                          const resp = await fetch(`${API_URL}/api/tools/${editing.id}/source`);
+                          if (resp.ok) {
+                            const data = await resp.json();
+                            setCode(data.source || "");
+                          }
+                        } catch {}
+                      }}
+                      className="text-xs text-violet-400 hover:text-violet-300 transition-colors"
+                    >
+                      Load built-in source
+                    </button>
+                  )}
+                </div>
+                {editing?.is_builtin && (
+                  <div className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-[11px] font-mono text-zinc-500 mb-1">
+                    Built-in: {editing.implementation}
                   </div>
-                ) : (
-                  <>
-                    <textarea value={code} onChange={(e) => setCode(e.target.value)}
-                      rows={12}
-                      className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-xs font-mono resize-y focus:outline-none focus:ring-1 focus:ring-violet-500 text-emerald-300"
-                      placeholder="def execute(**kwargs):&#10;    return 'result'" />
-                    <p className="text-[11px] text-zinc-600">
-                      Define an <code className="text-zinc-400">execute(**kwargs)</code> function. Parameters from the schema are passed as kwargs. Return a string or dict.
-                    </p>
-                  </>
                 )}
+                <textarea value={code} onChange={(e) => setCode(e.target.value)}
+                  rows={12}
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-xs font-mono resize-y focus:outline-none focus:ring-1 focus:ring-violet-500 text-emerald-300"
+                  placeholder="def execute(**kwargs):&#10;    return 'result'" />
+                <p className="text-[11px] text-zinc-600">
+                  Define an <code className="text-zinc-400">execute(**kwargs)</code> function. Parameters from the schema are passed as kwargs. Return a string or dict.
+                  {editing?.is_builtin && " For built-in tools, saving code here creates a custom override."}
+                </p>
               </div>
 
               <div className="flex gap-4">
@@ -223,12 +209,10 @@ export default function ToolsPage() {
 
               <div className="flex justify-end gap-2">
                 <button onClick={resetForm} className="px-4 py-2 rounded-lg text-sm text-zinc-400 hover:bg-zinc-800">Cancel</button>
-                {!editing?.is_builtin && (
-                  <button onClick={handleSave} disabled={saving || !name || !code}
-                    className="px-4 py-2 rounded-lg text-sm bg-violet-600 hover:bg-violet-500 disabled:bg-zinc-700 disabled:text-zinc-500">
-                    {saving ? "Saving..." : editing ? "Update" : "Create"}
-                  </button>
-                )}
+                <button onClick={handleSave} disabled={saving || !name}
+                  className="px-4 py-2 rounded-lg text-sm bg-violet-600 hover:bg-violet-500 disabled:bg-zinc-700 disabled:text-zinc-500">
+                  {saving ? "Saving..." : editing ? "Update" : "Create"}
+                </button>
               </div>
             </div>
           )}
