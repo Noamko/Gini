@@ -42,13 +42,27 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         await logger.awarning("stale_runs_cleanup_skipped", error=str(e)[:100])
 
-    # Sync built-in tools to DB
+    # Sync tools to DB (built-in + custom defaults)
     try:
+        import inspect
         from app.dependencies import async_session as _as
         from app.models.tool import Tool
         from app.tools.registry import BUILTIN_TOOLS
         from sqlalchemy import select as _sel
+
+        # Tools that should be custom (editable) with their source code
+        from app.tools.send_telegram import SendTelegramTool, SendTelegramPhotoTool, SendTelegramMediaGroupTool
+        from app.tools.cache import CacheSetTool, CacheGetTool, CacheDeleteTool, CacheListTool
+        from app.tools.yad2_search import Yad2SearchTool
+
+        custom_tool_classes = [
+            SendTelegramTool(), SendTelegramPhotoTool(), SendTelegramMediaGroupTool(),
+            CacheSetTool(), CacheGetTool(), CacheDeleteTool(), CacheListTool(),
+            Yad2SearchTool(),
+        ]
+
         async with _as() as db:
+            # Sync core built-in tools
             for tool_impl in BUILTIN_TOOLS:
                 result = await db.execute(_sel(Tool).where(Tool.name == tool_impl.name))
                 existing = result.scalar_one_or_none()
@@ -61,6 +75,36 @@ async def lifespan(app: FastAPI):
                         requires_approval=tool_impl.requires_approval,
                         is_builtin=True,
                     ))
+
+            # Sync custom tools (editable from UI)
+            for tool_impl in custom_tool_classes:
+                result = await db.execute(_sel(Tool).where(Tool.name == tool_impl.name))
+                existing = result.scalar_one_or_none()
+                if existing:
+                    # Mark as not built-in if it was previously
+                    if existing.is_builtin:
+                        existing.is_builtin = False
+                    # Set code if not already set
+                    if not existing.code:
+                        try:
+                            existing.code = inspect.getsource(type(tool_impl).execute)
+                        except Exception:
+                            pass
+                else:
+                    try:
+                        source = inspect.getsource(type(tool_impl).execute)
+                    except Exception:
+                        source = None
+                    db.add(Tool(
+                        name=tool_impl.name, description=tool_impl.description,
+                        parameters_schema=tool_impl.parameters_schema,
+                        implementation=f"app.tools.{tool_impl.name}.{type(tool_impl).__name__}",
+                        requires_sandbox=tool_impl.requires_sandbox,
+                        requires_approval=tool_impl.requires_approval,
+                        is_builtin=False,
+                        code=source,
+                    ))
+
             await db.commit()
         await logger.ainfo("tools_synced")
     except Exception as e:

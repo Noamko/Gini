@@ -1,29 +1,18 @@
-"""Tool registry — discovers and provides access to all built-in tools."""
+"""Tool registry — core built-in tools only. Other tools live in the DB as custom tools."""
 from app.tools.base import BaseTool
 from app.tools.read_file import ReadFileTool
 from app.tools.write_file import WriteFileTool
 from app.tools.run_shell import RunShellTool
 from app.tools.web_fetch import WebFetchTool
 from app.tools.delegate_task import DelegateTaskTool
-from app.tools.send_telegram import SendTelegramTool, SendTelegramPhotoTool, SendTelegramMediaGroupTool
-from app.tools.cache import CacheSetTool, CacheGetTool, CacheDeleteTool, CacheListTool
-from app.tools.yad2_search import Yad2SearchTool
 
-# All built-in tools
+# Core built-in tools (not editable from UI)
 BUILTIN_TOOLS: list[BaseTool] = [
     ReadFileTool(),
     WriteFileTool(),
     RunShellTool(),
     WebFetchTool(),
     DelegateTaskTool(),
-    SendTelegramTool(),
-    SendTelegramPhotoTool(),
-    SendTelegramMediaGroupTool(),
-    CacheSetTool(),
-    CacheGetTool(),
-    CacheDeleteTool(),
-    CacheListTool(),
-    Yad2SearchTool(),
 ]
 
 _tools_by_name: dict[str, BaseTool] = {t.name: t for t in BUILTIN_TOOLS}
