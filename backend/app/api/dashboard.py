@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, redis_client
 from app.models.agent import Agent
+from app.models.agent_run import AgentRun
 from app.models.event import Event
 from app.models.execution_log import ExecutionLog
 from app.services.agent_orchestrator import (
@@ -47,19 +48,29 @@ async def dashboard_agents(db: AsyncSession = Depends(get_db)):
 
 @router.get("/api/dashboard/costs")
 async def dashboard_costs(db: AsyncSession = Depends(get_db)):
-    """Get cost summary from execution logs (single source of truth)."""
-    result = await db.execute(
+    """Get cost summary from execution logs + agent runs."""
+    r1 = await db.execute(
         select(
-            func.count(func.distinct(ExecutionLog.trace_id)).label("total_traces"),
-            func.sum(ExecutionLog.input_tokens + ExecutionLog.output_tokens).label("total_tokens"),
-            func.sum(ExecutionLog.cost_usd).label("total_cost"),
+            func.count(func.distinct(ExecutionLog.trace_id)),
+            func.sum(ExecutionLog.input_tokens + ExecutionLog.output_tokens),
+            func.sum(ExecutionLog.cost_usd),
         )
     )
-    row = result.one()
+    logs = r1.one()
+
+    r2 = await db.execute(
+        select(
+            func.count(AgentRun.id),
+            func.sum(AgentRun.input_tokens + AgentRun.output_tokens),
+            func.sum(AgentRun.cost_usd),
+        ).where(AgentRun.status.in_(["done", "failed"]))
+    )
+    runs = r2.one()
+
     return {
-        "total_messages": row.total_traces or 0,
-        "total_tokens": int(row.total_tokens or 0),
-        "total_cost": float(row.total_cost or 0),
+        "total_messages": (logs[0] or 0) + (runs[0] or 0),
+        "total_tokens": int((logs[1] or 0) + (runs[1] or 0)),
+        "total_cost": float((logs[2] or 0) + (runs[2] or 0)),
     }
 
 

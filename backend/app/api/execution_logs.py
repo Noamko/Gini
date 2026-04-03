@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.models.execution_log import ExecutionLog
+from app.models.agent_run import AgentRun
+from app.models.agent import Agent
 from app.schemas.execution_log import ExecutionLogResponse, TraceSummary
 
 router = APIRouter(tags=["traces"])
@@ -98,25 +100,38 @@ async def get_trace(trace_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("/api/costs")
 async def cost_summary(db: AsyncSession = Depends(get_db)):
-    """Overall cost summary from execution logs."""
-    result = await db.execute(
+    """Overall cost summary from execution logs + agent runs."""
+    # Execution logs (chat interactions)
+    r1 = await db.execute(
         select(
-            func.count(distinct(ExecutionLog.trace_id)).label("total_traces"),
-            func.count(ExecutionLog.id).label("total_steps"),
-            func.sum(ExecutionLog.input_tokens).label("total_input_tokens"),
-            func.sum(ExecutionLog.output_tokens).label("total_output_tokens"),
-            func.sum(ExecutionLog.cost_usd).label("total_cost"),
-            func.sum(ExecutionLog.duration_ms).label("total_duration_ms"),
+            func.count(distinct(ExecutionLog.trace_id)).label("traces"),
+            func.sum(ExecutionLog.input_tokens).label("input"),
+            func.sum(ExecutionLog.output_tokens).label("output"),
+            func.sum(ExecutionLog.cost_usd).label("cost"),
+            func.sum(ExecutionLog.duration_ms).label("duration"),
         )
     )
-    row = result.one()
+    logs = r1.one()
+
+    # Agent runs (background runs + delegations)
+    r2 = await db.execute(
+        select(
+            func.count(AgentRun.id).label("runs"),
+            func.sum(AgentRun.input_tokens).label("input"),
+            func.sum(AgentRun.output_tokens).label("output"),
+            func.sum(AgentRun.cost_usd).label("cost"),
+            func.sum(AgentRun.duration_ms).label("duration"),
+        ).where(AgentRun.status.in_(["done", "failed"]))
+    )
+    runs = r2.one()
+
     return {
-        "total_traces": row.total_traces or 0,
-        "total_steps": row.total_steps or 0,
-        "total_input_tokens": int(row.total_input_tokens or 0),
-        "total_output_tokens": int(row.total_output_tokens or 0),
-        "total_cost": float(row.total_cost or 0),
-        "total_duration_ms": float(row.total_duration_ms or 0),
+        "total_traces": (logs.traces or 0) + (runs.runs or 0),
+        "total_steps": 0,
+        "total_input_tokens": int((logs.input or 0) + (runs.input or 0)),
+        "total_output_tokens": int((logs.output or 0) + (runs.output or 0)),
+        "total_cost": float((logs.cost or 0) + (runs.cost or 0)),
+        "total_duration_ms": float((logs.duration or 0) + (runs.duration or 0)),
     }
 
 
@@ -132,6 +147,7 @@ async def cost_breakdown(
         "step_type": ExecutionLog.step_type,
     }[group_by]
 
+    # Get from execution_logs
     result = await db.execute(
         select(
             group_col.label("group_key"),
@@ -143,17 +159,49 @@ async def cost_breakdown(
         )
         .where(group_col.isnot(None))
         .group_by(group_col)
-        .order_by(func.sum(ExecutionLog.cost_usd).desc())
     )
-    rows = result.all()
-    return [
-        {
+    merged: dict[str, dict] = {}
+    for r in result.all():
+        merged[r.group_key] = {
             "group": r.group_key,
-            "count": r.count,
+            "count": r.count or 0,
             "input_tokens": int(r.input_tokens or 0),
             "output_tokens": int(r.output_tokens or 0),
             "cost_usd": float(r.cost_usd or 0),
             "duration_ms": float(r.duration_ms or 0),
         }
-        for r in rows
-    ]
+
+    # For agent breakdown, also include agent_runs data
+    if group_by == "agent":
+        runs_result = await db.execute(
+            select(
+                Agent.name.label("agent_name"),
+                func.count(AgentRun.id).label("count"),
+                func.sum(AgentRun.input_tokens).label("input_tokens"),
+                func.sum(AgentRun.output_tokens).label("output_tokens"),
+                func.sum(AgentRun.cost_usd).label("cost_usd"),
+                func.sum(AgentRun.duration_ms).label("duration_ms"),
+            )
+            .join(Agent, AgentRun.agent_id == Agent.id)
+            .where(AgentRun.status.in_(["done", "failed"]))
+            .group_by(Agent.name)
+        )
+        for r in runs_result.all():
+            name = r.agent_name
+            if name in merged:
+                merged[name]["count"] += r.count or 0
+                merged[name]["input_tokens"] += int(r.input_tokens or 0)
+                merged[name]["output_tokens"] += int(r.output_tokens or 0)
+                merged[name]["cost_usd"] += float(r.cost_usd or 0)
+                merged[name]["duration_ms"] += float(r.duration_ms or 0)
+            else:
+                merged[name] = {
+                    "group": name,
+                    "count": r.count or 0,
+                    "input_tokens": int(r.input_tokens or 0),
+                    "output_tokens": int(r.output_tokens or 0),
+                    "cost_usd": float(r.cost_usd or 0),
+                    "duration_ms": float(r.duration_ms or 0),
+                }
+
+    return sorted(merged.values(), key=lambda x: x["cost_usd"], reverse=True)
