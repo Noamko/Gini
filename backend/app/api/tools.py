@@ -36,6 +36,31 @@ async def get_tool(tool_id: UUID, db: AsyncSession = Depends(get_db)):
     return ToolResponse.model_validate(tool)
 
 
+@router.get("/{tool_id}/source")
+async def get_tool_source(tool_id: UUID, db: AsyncSession = Depends(get_db)):
+    """Get the Python source code of a built-in tool."""
+    tool = await db.get(Tool, tool_id)
+    if not tool:
+        raise HTTPException(status_code=404, detail="Tool not found")
+
+    if tool.code:
+        return {"source": tool.code}
+
+    # For built-in tools, read the source file
+    if tool.is_builtin:
+        try:
+            import inspect
+            from app.tools.registry import get_tool as get_builtin
+            builtin = get_builtin(tool.name)
+            if builtin:
+                source = inspect.getsource(type(builtin))
+                return {"source": source}
+        except Exception:
+            pass
+
+    return {"source": f"# Source not available for {tool.name}"}
+
+
 @router.post("", status_code=201)
 async def create_tool(body: ToolCreate, db: AsyncSession = Depends(get_db)):
     """Create a custom tool with Python code."""

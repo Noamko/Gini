@@ -168,8 +168,34 @@ export default function ToolsPage() {
                   {editing?.is_builtin ? "Implementation (read-only)" : "Python Code"}
                 </label>
                 {editing?.is_builtin ? (
-                  <div className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs font-mono text-zinc-500">
-                    Built-in: {editing.implementation}
+                  <div className="space-y-2">
+                    <div className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-xs font-mono text-zinc-500">
+                      Built-in: {editing.implementation}
+                    </div>
+                    {!code && (
+                      <button
+                        onClick={async () => {
+                          try {
+                            const API_URL = typeof window !== "undefined"
+                              ? (window.location.port ? `http://${window.location.hostname}:8000` : window.location.origin)
+                              : "http://localhost:8000";
+                            const resp = await fetch(`${API_URL}/api/tools/${editing.id}/source`);
+                            if (resp.ok) {
+                              const data = await resp.json();
+                              setCode(data.source || "# Source not available");
+                            }
+                          } catch {}
+                        }}
+                        className="text-xs text-violet-400 hover:text-violet-300 transition-colors"
+                      >
+                        View source code
+                      </button>
+                    )}
+                    {code && (
+                      <pre className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-xs font-mono text-zinc-400 max-h-64 overflow-y-auto whitespace-pre-wrap">
+                        {code}
+                      </pre>
+                    )}
                   </div>
                 ) : (
                   <>
