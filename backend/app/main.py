@@ -87,12 +87,12 @@ async def lifespan(app: FastAPI):
                     # Set code if not already set
                     if not existing.code:
                         try:
-                            existing.code = inspect.getsource(type(tool_impl).execute)
+                            existing.code = inspect.getsource(inspect.getmodule(type(tool_impl)))
                         except Exception:
                             pass
                 else:
                     try:
-                        source = inspect.getsource(type(tool_impl).execute)
+                        source = inspect.getsource(inspect.getmodule(type(tool_impl)))
                     except Exception:
                         source = None
                     db.add(Tool(
