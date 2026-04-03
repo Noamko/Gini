@@ -70,7 +70,7 @@ async def lifespan(app: FastAPI):
                     db.add(Tool(
                         name=tool_impl.name, description=tool_impl.description,
                         parameters_schema=tool_impl.parameters_schema,
-                        implementation=f"app.tools.{tool_impl.name}.{type(tool_impl).__name__}",
+                        implementation=f"{type(tool_impl).__module__}.{type(tool_impl).__name__}",
                         requires_sandbox=tool_impl.requires_sandbox,
                         requires_approval=tool_impl.requires_approval,
                         is_builtin=True,
@@ -78,12 +78,19 @@ async def lifespan(app: FastAPI):
 
             # Sync custom tools (editable from UI)
             for tool_impl in custom_tool_classes:
+                module = type(tool_impl).__module__
+                class_name = type(tool_impl).__name__
+                impl_path = f"{module}.{class_name}"
+
                 result = await db.execute(_sel(Tool).where(Tool.name == tool_impl.name))
                 existing = result.scalar_one_or_none()
                 if existing:
                     # Mark as not built-in if it was previously
                     if existing.is_builtin:
                         existing.is_builtin = False
+                    # Fix implementation path if wrong
+                    if existing.implementation != impl_path:
+                        existing.implementation = impl_path
                     # Set code if not already set
                     if not existing.code:
                         try:
@@ -98,7 +105,7 @@ async def lifespan(app: FastAPI):
                     db.add(Tool(
                         name=tool_impl.name, description=tool_impl.description,
                         parameters_schema=tool_impl.parameters_schema,
-                        implementation=f"app.tools.{tool_impl.name}.{type(tool_impl).__name__}",
+                        implementation=impl_path,
                         requires_sandbox=tool_impl.requires_sandbox,
                         requires_approval=tool_impl.requires_approval,
                         is_builtin=False,
