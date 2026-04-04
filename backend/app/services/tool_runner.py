@@ -9,9 +9,9 @@ import time
 import structlog
 from sqlalchemy import select
 
+from app.sandbox.manager import sandbox_manager
 from app.tools.base import BaseTool, ToolResult
 from app.tools.registry import get_tool
-from app.sandbox.manager import sandbox_manager
 
 logger = structlog.get_logger("tool_runner")
 
@@ -95,8 +95,8 @@ async def _run_custom_inprocess(db_tool, arguments: dict) -> ToolResult:
                 tool_instance = tool_class()
                 result = await tool_instance.execute(**arguments)
                 return result
-        except Exception:
-            pass  # Fall through to code execution
+        except Exception as e:
+            await logger.adebug("tool_impl_import_fallback", tool=db_tool.name, error=str(e))
 
     # Second try: execute the code field
     code = db_tool.code

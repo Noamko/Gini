@@ -2,14 +2,14 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.dependencies import get_db
-from app.models.schedule import Schedule
 from app.models.agent import Agent
-from app.schemas.schedule import ScheduleCreate, ScheduleUpdate, ScheduleResponse
+from app.models.schedule import Schedule
+from app.schemas.schedule import ScheduleCreate, ScheduleResponse, ScheduleUpdate
 from app.services.scheduler import compute_next_run
 
 router = APIRouter(prefix="/api/schedules", tags=["schedules"])

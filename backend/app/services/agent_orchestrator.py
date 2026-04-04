@@ -1,19 +1,17 @@
 """Agent orchestrator — manages agent lifecycle, delegation, and state tracking."""
-import asyncio
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 from uuid import UUID
 
 import structlog
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import async_session, redis_client
 from app.event_bus.bus import event_bus
 from app.event_bus.events import EventTypes
 from app.models.agent import Agent
 from app.models.agent_run import AgentRun
-from app.services.llm_gateway import llm_gateway, LLMResponse
+from app.services.llm_gateway import LLMResponse, llm_gateway
 from app.services.skill_executor import get_assembled_prompt_with_credentials
 from app.tools.registry import get_all_tool_specs
 
@@ -81,7 +79,7 @@ async def run_sub_agent(
     agent: Agent,
     task: str,
     parent_conversation_id: str,
-    on_chunk: Optional[Callable] = None,
+    on_chunk: Callable | None = None,
 ) -> dict:
     """Run a sub-agent to completion on a task. Returns the result.
 
@@ -124,7 +122,7 @@ async def run_sub_agent(
     total_cost = 0.0
 
     try:
-        for round_num in range(MAX_DELEGATION_ROUNDS):
+        for _round_num in range(MAX_DELEGATION_ROUNDS):
             await set_agent_state(str(agent.id), STATE_THINKING)
 
             response: LLMResponse = await llm_gateway.call_with_tools(

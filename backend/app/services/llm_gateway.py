@@ -6,8 +6,10 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 
 import structlog
-from anthropic import AsyncAnthropic, APIStatusError as AnthropicAPIStatusError
-from openai import AsyncOpenAI, APIStatusError as OpenAIAPIStatusError
+from anthropic import APIStatusError as AnthropicAPIStatusError
+from anthropic import AsyncAnthropic
+from openai import APIStatusError as OpenAIAPIStatusError
+from openai import AsyncOpenAI
 
 from app.config import settings
 from app.services.cost_tracker import calculate_cost

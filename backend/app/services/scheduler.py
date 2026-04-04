@@ -1,6 +1,6 @@
 """Scheduler — checks for due schedules and fires agent runs."""
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 from croniter import croniter
@@ -8,8 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from app.dependencies import async_session
-from app.models.schedule import Schedule
 from app.models.agent_run import AgentRun
+from app.models.schedule import Schedule
 
 logger = structlog.get_logger("scheduler")
 
@@ -19,9 +19,9 @@ CHECK_INTERVAL = 30  # seconds
 def compute_next_run(cron_expression: str, after: datetime | None = None) -> datetime | None:
     """Compute the next run time from a cron expression. Returns None if invalid."""
     try:
-        base = after or datetime.now(timezone.utc)
+        base = after or datetime.now(UTC)
         cron = croniter(cron_expression, base)
-        return cron.get_next(datetime).replace(tzinfo=timezone.utc)
+        return cron.get_next(datetime).replace(tzinfo=UTC)
     except (ValueError, KeyError):
         return None
 
@@ -47,7 +47,7 @@ class Scheduler:
             await asyncio.sleep(CHECK_INTERVAL)
 
     async def _check_schedules(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         async with async_session() as db:
             result = await db.execute(

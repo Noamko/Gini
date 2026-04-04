@@ -1,5 +1,4 @@
 """Yad2 apartment search tool — uses stealth Playwright to scrape listings."""
-import asyncio
 import json
 from typing import Any
 
@@ -128,8 +127,8 @@ async def _scrape_yad2(city_code: str, max_price: int | None, min_rooms: int | N
                         }""")
                         if images:
                             item["image_urls"] = images
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        await logger.adebug("yad2_image_scrape_failed", error=str(e))
 
         await browser.close()
         return listings.get("items", []) if isinstance(listings, dict) else []

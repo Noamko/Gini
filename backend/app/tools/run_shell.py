@@ -48,7 +48,7 @@ class RunShellTool(BaseTool):
                 error=f"Exit code: {proc.returncode}" if proc.returncode != 0 else None,
                 metadata={"command": command, "exit_code": proc.returncode},
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return ToolResult(success=False, error=f"Command timed out after {timeout}s")
         except Exception as e:
             return ToolResult(success=False, error=str(e))

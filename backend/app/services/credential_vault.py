@@ -2,11 +2,10 @@
 import base64
 import hashlib
 
+import structlog
 from cryptography.fernet import Fernet
 
 from app.config import settings
-
-import structlog
 
 logger = structlog.get_logger("credential_vault")
 

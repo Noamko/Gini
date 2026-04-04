@@ -112,7 +112,7 @@ class SandboxManager:
             )
             return result
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             kill_proc = await asyncio.create_subprocess_exec(
                 "docker", "kill", container_name,
                 stdout=asyncio.subprocess.DEVNULL,

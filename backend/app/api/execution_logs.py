@@ -2,13 +2,13 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, distinct, cast, String
+from sqlalchemy import String, cast, distinct, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models.execution_log import ExecutionLog
-from app.models.agent_run import AgentRun
 from app.models.agent import Agent
+from app.models.agent_run import AgentRun
+from app.models.execution_log import ExecutionLog
 from app.schemas.execution_log import ExecutionLogResponse, TraceSummary
 
 router = APIRouter(tags=["traces"])
@@ -90,11 +90,11 @@ async def get_trace(trace_id: str, db: AsyncSession = Depends(get_db)):
     logs = result.scalars().all()
     return {
         "trace_id": trace_id,
-        "steps": [ExecutionLogResponse.from_orm_model(l) for l in logs],
-        "total_duration_ms": sum(l.duration_ms for l in logs),
-        "total_cost_usd": sum(l.cost_usd for l in logs),
-        "total_input_tokens": sum(l.input_tokens for l in logs),
-        "total_output_tokens": sum(l.output_tokens for l in logs),
+        "steps": [ExecutionLogResponse.from_orm_model(log) for log in logs],
+        "total_duration_ms": sum(log.duration_ms for log in logs),
+        "total_cost_usd": sum(log.cost_usd for log in logs),
+        "total_input_tokens": sum(log.input_tokens for log in logs),
+        "total_output_tokens": sum(log.output_tokens for log in logs),
     }
 
 

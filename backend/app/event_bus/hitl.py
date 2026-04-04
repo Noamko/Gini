@@ -66,7 +66,7 @@ async def wait_for_approval(pending: PendingApproval, timeout: float = APPROVAL_
     """Wait for user to approve or reject. Returns True if approved."""
     try:
         await asyncio.wait_for(pending.event.wait(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         await logger.awarn("approval_timeout", approval_id=pending.id)
         pending.approved = False
         pending.reject_reason = "Approval timed out"
@@ -88,7 +88,6 @@ async def resolve_approval(approval_id: str, approved: bool, reason: str | None 
     pending.reject_reason = reason if not approved else None
     pending.event.set()
 
-    event_type = EventTypes.APPROVAL_GRANTED if approved else EventTypes.APPROVAL_REJECTED
     status = "approved" if approved else "rejected"
     await event_bus.update_event_status(
         pending.id,

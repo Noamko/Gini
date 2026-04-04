@@ -7,10 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models.skill import Skill, agent_skills, skill_tools
-from app.models.tool import Tool
 from app.models.credential import Credential
-from app.schemas.skill import SkillCreate, SkillUpdate, SkillResponse
+from app.models.skill import Skill, agent_skills
+from app.models.tool import Tool
+from app.schemas.skill import SkillCreate, SkillResponse, SkillUpdate
 from app.services.skill_executor import invalidate_prompt_cache
 
 logger = structlog.get_logger("skills_api")

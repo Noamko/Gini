@@ -8,8 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
 from app.models.credential import Credential
-from app.schemas.credential import CredentialCreate, CredentialUpdate, CredentialResponse
-from app.services.credential_vault import encrypt_value, decrypt_value
+from app.schemas.credential import CredentialCreate, CredentialResponse, CredentialUpdate
+from app.services.credential_vault import decrypt_value, encrypt_value
 
 logger = structlog.get_logger("credentials_api")
 
@@ -76,7 +76,7 @@ async def reveal_credential(credential_id: UUID, db: AsyncSession = Depends(get_
     try:
         value = decrypt_value(cred.encrypted_value)
     except Exception:
-        raise HTTPException(500, "Failed to decrypt credential")
+        raise HTTPException(500, "Failed to decrypt credential") from None
     return {"value": value}
 
 

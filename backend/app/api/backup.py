@@ -1,5 +1,5 @@
-"""Backup and restore API — exports/imports all config as portable JSON."""
-from datetime import datetime, timezone
+"""Backup and restore API — exports/imports all config and history as portable JSON."""
+from datetime import UTC, datetime
 from uuid import UUID
 
 import structlog
@@ -10,24 +10,35 @@ from sqlalchemy.orm import selectinload
 
 from app.dependencies import get_db
 from app.models.agent import Agent
-from app.models.tool import Tool
-from app.models.credential import Credential
-from app.models.skill import Skill, agent_skills, skill_tools
-from app.models.credential import skill_credentials
-from app.models.workflow import Workflow
+from app.models.agent_run import AgentRun
+from app.models.conversation import Conversation
+from app.models.credential import Credential, skill_credentials
+from app.models.event import Event
+from app.models.execution_log import ExecutionLog
+from app.models.message import Message
 from app.models.schedule import Schedule
+from app.models.skill import Skill, agent_skills, skill_tools
+from app.models.tool import Tool
 from app.models.webhook import Webhook
+from app.models.workflow import Workflow
 
 logger = structlog.get_logger("backup")
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
 
-BACKUP_VERSION = "1.0"
+BACKUP_VERSION = "1.1"
+
+
+def _serialize_uuid(val):
+    """Convert UUID to string for JSON serialization."""
+    if isinstance(val, UUID):
+        return str(val)
+    return val
 
 
 @router.get("/export")
 async def export_backup(db: AsyncSession = Depends(get_db)):
-    """Export all config data as portable JSON."""
+    """Export all config and history data as portable JSON."""
 
     # Agents
     result = await db.execute(select(Agent).order_by(Agent.name))
@@ -61,6 +72,7 @@ async def export_backup(db: AsyncSession = Depends(get_db)):
             "requires_approval": t.requires_approval,
             "is_builtin": t.is_builtin,
             "is_active": t.is_active,
+            "code": t.code,
         }
         for t in result.scalars().all()
     ]
@@ -99,7 +111,6 @@ async def export_backup(db: AsyncSession = Depends(get_db)):
     )
     agent_skill_rows = result.all()
     # Resolve IDs to names
-    agent_map = {a["name"]: None for a in agents}  # just need names
     result = await db.execute(select(Agent.id, Agent.name))
     id_to_agent = {row[0]: row[1] for row in result.all()}
     result = await db.execute(select(Skill.id, Skill.name))
@@ -177,11 +188,116 @@ async def export_backup(db: AsyncSession = Depends(get_db)):
         for w in result.scalars().all()
     ]
 
-    await logger.ainfo("backup_exported", agents=len(agents), skills=len(skills), credentials=len(credentials))
+    # --- History data ---
+
+    # Conversations (agent_name instead of agent_id)
+    result = await db.execute(select(Conversation).order_by(Conversation.created_at))
+    conversations = [
+        {
+            "id": str(c.id),
+            "title": c.title,
+            "agent_name": id_to_agent.get(c.agent_id) if c.agent_id else None,
+            "metadata": c.metadata_,
+            "created_at": c.created_at.isoformat(),
+            "updated_at": c.updated_at.isoformat(),
+        }
+        for c in result.scalars().all()
+    ]
+
+    # Messages (conversation_id kept as-is since conversations have their IDs)
+    result = await db.execute(select(Message).order_by(Message.created_at))
+    messages = [
+        {
+            "id": str(m.id),
+            "conversation_id": str(m.conversation_id),
+            "role": m.role,
+            "content": m.content,
+            "tool_calls": m.tool_calls,
+            "tool_call_id": m.tool_call_id,
+            "token_count": m.token_count,
+            "model_used": m.model_used,
+            "cost_usd": float(m.cost_usd) if m.cost_usd else None,
+            "metadata": m.metadata_,
+            "created_at": m.created_at.isoformat(),
+        }
+        for m in result.scalars().all()
+    ]
+
+    # Agent runs (agent_name instead of agent_id)
+    result = await db.execute(select(AgentRun).order_by(AgentRun.created_at))
+    agent_runs = [
+        {
+            "id": str(r.id),
+            "agent_name": id_to_agent.get(r.agent_id, "?"),
+            "status": r.status,
+            "instructions": r.instructions,
+            "result": r.result,
+            "error": r.error,
+            "input_tokens": r.input_tokens,
+            "output_tokens": r.output_tokens,
+            "cost_usd": r.cost_usd,
+            "duration_ms": r.duration_ms,
+            "steps": r.steps,
+            "created_at": r.created_at.isoformat(),
+            "updated_at": r.updated_at.isoformat(),
+        }
+        for r in result.scalars().all()
+    ]
+
+    # Execution logs
+    result = await db.execute(select(ExecutionLog).order_by(ExecutionLog.created_at))
+    execution_logs = [
+        {
+            "id": str(el.id),
+            "trace_id": el.trace_id,
+            "conversation_id": str(el.conversation_id) if el.conversation_id else None,
+            "agent_id": str(el.agent_id) if el.agent_id else None,
+            "agent_name": el.agent_name,
+            "step_type": el.step_type,
+            "step_name": el.step_name,
+            "step_order": el.step_order,
+            "input_data": el.input_data,
+            "output_data": el.output_data,
+            "error": el.error,
+            "duration_ms": el.duration_ms,
+            "input_tokens": el.input_tokens,
+            "output_tokens": el.output_tokens,
+            "cost_usd": el.cost_usd,
+            "model": el.model,
+            "metadata": el.metadata_,
+            "created_at": el.created_at.isoformat(),
+        }
+        for el in result.scalars().all()
+    ]
+
+    # Events
+    result = await db.execute(select(Event).order_by(Event.created_at))
+    events = [
+        {
+            "id": str(e.id),
+            "event_type": e.event_type,
+            "correlation_id": e.correlation_id,
+            "conversation_id": str(e.conversation_id) if e.conversation_id else None,
+            "source": e.source,
+            "payload": e.payload,
+            "status": e.status,
+            "result": e.result,
+            "created_at": e.created_at.isoformat(),
+        }
+        for e in result.scalars().all()
+    ]
+
+    await logger.ainfo(
+        "backup_exported",
+        agents=len(agents), skills=len(skills), credentials=len(credentials),
+        conversations=len(conversations), messages=len(messages),
+        agent_runs=len(agent_runs), execution_logs=len(execution_logs), events=len(events),
+    )
 
     return {
         "version": BACKUP_VERSION,
-        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "exported_at": datetime.now(UTC).isoformat(),
+        # Config
         "agents": agents,
         "tools": tools,
         "credentials": credentials,
@@ -192,15 +308,22 @@ async def export_backup(db: AsyncSession = Depends(get_db)):
         "workflows": workflows,
         "schedules": schedules,
         "webhooks": webhooks,
+        # History
+        "conversations": conversations,
+        "messages": messages,
+        "agent_runs": agent_runs,
+        "execution_logs": execution_logs,
+        "events": events,
     }
 
 
 @router.post("/restore")
 async def restore_backup(data: dict, db: AsyncSession = Depends(get_db)):
-    """Restore config from a backup JSON. Upserts by name."""
+    """Restore config and history from a backup JSON. Upserts by name for config, by ID for history."""
 
-    if data.get("version") != BACKUP_VERSION:
-        raise HTTPException(400, f"Unsupported backup version: {data.get('version')}")
+    version = data.get("version", "")
+    if version not in (BACKUP_VERSION, "1.0"):
+        raise HTTPException(400, f"Unsupported backup version: {version}")
 
     counts = {}
 
@@ -359,6 +482,89 @@ async def restore_backup(data: dict, db: AsyncSession = Depends(get_db)):
                 instructions_template=w.get("instructions_template"), enabled=w.get("enabled", True),
             ))
         counts["webhooks"] = counts.get("webhooks", 0) + 1
+
+    await db.flush()
+
+    # --- History data (upsert by ID) ---
+
+    # 11. Conversations
+    for c in data.get("conversations", []):
+        cid = UUID(c["id"])
+        existing = await db.get(Conversation, cid)
+        if not existing:
+            agent_id = agent_lookup.get(c.get("agent_name")) if c.get("agent_name") else None
+            db.add(Conversation(
+                id=cid, title=c.get("title"), agent_id=agent_id,
+                metadata_=c.get("metadata", {}),
+            ))
+            counts["conversations"] = counts.get("conversations", 0) + 1
+    await db.flush()
+
+    # 12. Messages
+    for m in data.get("messages", []):
+        mid = UUID(m["id"])
+        existing = await db.get(Message, mid)
+        if not existing:
+            db.add(Message(
+                id=mid, conversation_id=UUID(m["conversation_id"]), role=m["role"],
+                content=m.get("content"), tool_calls=m.get("tool_calls"),
+                tool_call_id=m.get("tool_call_id"), token_count=m.get("token_count"),
+                model_used=m.get("model_used"), cost_usd=m.get("cost_usd"),
+                metadata_=m.get("metadata", {}),
+            ))
+            counts["messages"] = counts.get("messages", 0) + 1
+    await db.flush()
+
+    # 13. Agent runs
+    for r in data.get("agent_runs", []):
+        rid = UUID(r["id"])
+        existing = await db.get(AgentRun, rid)
+        if not existing:
+            agent_id = agent_lookup.get(r.get("agent_name"))
+            if agent_id:
+                db.add(AgentRun(
+                    id=rid, agent_id=agent_id, status=r["status"],
+                    instructions=r.get("instructions"), result=r.get("result"),
+                    error=r.get("error"), input_tokens=r.get("input_tokens", 0),
+                    output_tokens=r.get("output_tokens", 0), cost_usd=r.get("cost_usd", 0),
+                    duration_ms=r.get("duration_ms", 0), steps=r.get("steps", []),
+                ))
+                counts["agent_runs"] = counts.get("agent_runs", 0) + 1
+    await db.flush()
+
+    # 14. Execution logs
+    for el in data.get("execution_logs", []):
+        elid = UUID(el["id"])
+        existing = await db.get(ExecutionLog, elid)
+        if not existing:
+            db.add(ExecutionLog(
+                id=elid, trace_id=el["trace_id"],
+                conversation_id=UUID(el["conversation_id"]) if el.get("conversation_id") else None,
+                agent_id=UUID(el["agent_id"]) if el.get("agent_id") else None,
+                agent_name=el.get("agent_name"), step_type=el["step_type"],
+                step_name=el.get("step_name"), step_order=el.get("step_order", 0),
+                input_data=el.get("input_data"), output_data=el.get("output_data"),
+                error=el.get("error"), duration_ms=el.get("duration_ms", 0),
+                input_tokens=el.get("input_tokens", 0), output_tokens=el.get("output_tokens", 0),
+                cost_usd=el.get("cost_usd", 0), model=el.get("model"),
+                metadata_=el.get("metadata", {}),
+            ))
+            counts["execution_logs"] = counts.get("execution_logs", 0) + 1
+    await db.flush()
+
+    # 15. Events
+    for e in data.get("events", []):
+        eid = UUID(e["id"])
+        existing = await db.get(Event, eid)
+        if not existing:
+            db.add(Event(
+                id=eid, event_type=e["event_type"],
+                correlation_id=e.get("correlation_id"),
+                conversation_id=UUID(e["conversation_id"]) if e.get("conversation_id") else None,
+                source=e.get("source"), payload=e.get("payload"),
+                status=e.get("status", "created"), result=e.get("result"),
+            ))
+            counts["events"] = counts.get("events", 0) + 1
 
     await db.commit()
     await logger.ainfo("backup_restored", counts=counts)

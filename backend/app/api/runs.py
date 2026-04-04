@@ -4,22 +4,23 @@ import os
 import shutil
 import tempfile
 import time
+from datetime import UTC
 from uuid import UUID
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.dependencies import get_db, async_session, redis_client
+from app.dependencies import async_session, get_db, redis_client
 from app.models.agent import Agent
 from app.models.agent_run import AgentRun
 from app.schemas.agent_run import AgentRunCreate, AgentRunResponse
-from app.services.llm_gateway import llm_gateway, LLMResponse
+from app.services.agent_orchestrator import STATE_ERROR, STATE_EXECUTING, STATE_IDLE, STATE_THINKING, set_agent_state
+from app.services.llm_gateway import LLMResponse, llm_gateway
 from app.services.skill_executor import get_assembled_prompt_with_credentials
 from app.services.tool_runner import execute_tool
-from app.services.agent_orchestrator import set_agent_state, STATE_THINKING, STATE_EXECUTING, STATE_IDLE, STATE_ERROR
 from app.tools.registry import get_all_tool_specs
 
 logger = structlog.get_logger("runs")
@@ -87,8 +88,8 @@ async def check_budget(agent: Agent, db: AsyncSession) -> str | None:
     """Check if agent has exceeded daily budget. Returns error message or None."""
     if agent.daily_budget_usd is None:
         return None
-    from datetime import datetime, timezone, timedelta
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    from datetime import datetime
+    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
     result = await db.execute(
         select(func.coalesce(func.sum(AgentRun.cost_usd), 0))
         .where(AgentRun.agent_id == agent.id)

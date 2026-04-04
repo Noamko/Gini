@@ -9,19 +9,22 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from app.dependencies import async_session
-from app.event_bus.hitl import request_approval, wait_for_approval, resolve_approval
+from app.event_bus.hitl import request_approval, resolve_approval, wait_for_approval
 from app.models.agent import Agent
 from app.models.conversation import Conversation
 from app.models.message import Message
-from app.services.llm_gateway import llm_gateway, LLMResponse
-from app.services.tool_runner import execute_tool
-from app.services.skill_executor import get_assembled_prompt, get_assembled_prompt_with_credentials
-from app.services.agent_orchestrator import (
-    get_agent_by_name, run_sub_agent, set_agent_state,
-    broadcast_dashboard_event, STATE_THINKING, STATE_IDLE, STATE_DELEGATING,
-)
-from app.tools.registry import get_all_tool_specs, get_tool
 from app.observability.trace import TraceBuilder
+from app.services.agent_orchestrator import (
+    STATE_DELEGATING,
+    STATE_THINKING,
+    get_agent_by_name,
+    run_sub_agent,
+    set_agent_state,
+)
+from app.services.llm_gateway import LLMResponse, llm_gateway
+from app.services.skill_executor import get_assembled_prompt, get_assembled_prompt_with_credentials
+from app.services.tool_runner import execute_tool
+from app.tools.registry import get_all_tool_specs, get_tool
 
 logger = structlog.get_logger("chat")
 
@@ -280,7 +283,7 @@ async def _run_agent_loop(
                 })
 
                 # Drain the incoming queue for approval responses while waiting
-                async def drain_approvals():
+                async def drain_approvals(pending=pending):
                     """Process approval responses from the queue while we wait."""
                     while not pending.event.is_set():
                         try:
@@ -293,7 +296,7 @@ async def _run_agent_loop(
                                     approved=data.get("approved", False),
                                     reason=data.get("reason"),
                                 )
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             continue
 
                 # Wait for approval (with concurrent queue draining)

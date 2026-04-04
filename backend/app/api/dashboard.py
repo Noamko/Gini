@@ -1,11 +1,10 @@
 """Dashboard WebSocket and REST endpoints for real-time agent monitoring."""
 import asyncio
 import json
-from decimal import Decimal
 
 import structlog
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db, redis_client

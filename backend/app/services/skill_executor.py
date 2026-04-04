@@ -1,10 +1,8 @@
 """Skill context injection into agent system prompts."""
-import json
 from uuid import UUID
 
 import structlog
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import async_session, redis_client
 from app.models.agent import Agent

@@ -1,9 +1,8 @@
 """Runtime settings API — read/update app configuration."""
-from pydantic import BaseModel
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from app.config import settings
-from app.dependencies import redis_client
 from app.services.cost_tracker import MODEL_PRICING
 
 router = APIRouter(tags=["settings"])

@@ -146,7 +146,6 @@ class SendTelegramMediaGroupTool(BaseTool):
             media.append(item)
 
         try:
-            import json
             async with httpx.AsyncClient(timeout=20) as client:
                 resp = await client.post(
                     f"https://api.telegram.org/bot{token}/sendMediaGroup",

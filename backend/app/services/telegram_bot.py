@@ -4,6 +4,8 @@ from uuid import UUID
 
 import httpx
 import structlog
+from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.dependencies import async_session, redis_client
@@ -11,12 +13,10 @@ from app.models.agent import Agent
 from app.models.agent_run import AgentRun
 from app.models.conversation import Conversation
 from app.models.message import Message
-from app.services.llm_gateway import llm_gateway, LLMResponse
-from app.services.skill_executor import get_assembled_prompt_with_credentials, get_assembled_prompt
+from app.services.llm_gateway import LLMResponse, llm_gateway
+from app.services.skill_executor import get_assembled_prompt, get_assembled_prompt_with_credentials
 from app.services.tool_runner import execute_tool
 from app.tools.registry import get_all_tool_specs
-from sqlalchemy import select, func
-from sqlalchemy.orm import selectinload
 
 logger = structlog.get_logger("telegram")
 
@@ -198,7 +198,7 @@ class TelegramBot:
             desc = f" — {a.description}" if a.description else ""
             lines.append(f"• `{a.name}`{main}{desc}")
 
-        lines.append(f"\nSwitch with: /agent `<name>`")
+        lines.append("\nSwitch with: /agent `<name>`")
         await self._send_message(chat_id, "\n".join(lines))
 
     async def _cmd_agent(self, chat_id: int, user_name: str, arg: str):
@@ -244,7 +244,7 @@ class TelegramBot:
                 break
 
         if not matched_agent:
-            await self._send_message(chat_id, f"Couldn't find an agent in your command. Use /agents to list them.\n\nUsage: /run `<agent name>` `<task>`")
+            await self._send_message(chat_id, "Couldn't find an agent in your command. Use /agents to list them.\n\nUsage: /run `<agent name>` `<task>`")
             return
 
         if not task:
@@ -381,6 +381,7 @@ class TelegramBot:
 
             # Transcribe with OpenAI Whisper
             from openai import AsyncOpenAI
+
             from app.config import settings
             openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
@@ -472,7 +473,7 @@ class TelegramBot:
         self, agent: Agent, messages: list[dict], system_prompt: str, tool_specs: list[dict],
         conversation_id: str | None = None,
     ) -> str:
-        for round_num in range(MAX_TOOL_ROUNDS):
+        for _round_num in range(MAX_TOOL_ROUNDS):
             response: LLMResponse = await llm_gateway.call_with_tools(
                 messages=messages,
                 system_prompt=system_prompt,

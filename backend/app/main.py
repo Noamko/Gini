@@ -8,7 +8,7 @@ from app.api.router import root_router
 from app.config import settings
 from app.dependencies import engine, redis_client
 from app.observability.logging import setup_logging
-from app.observability.middleware import CorrelationIdMiddleware, RequestLoggingMiddleware, RateLimitMiddleware
+from app.observability.middleware import CorrelationIdMiddleware, RateLimitMiddleware, RequestLoggingMiddleware
 
 
 @asynccontextmanager
@@ -27,9 +27,10 @@ async def lifespan(app: FastAPI):
 
     # Mark stale runs as failed (from previous crashes/restarts)
     try:
+        from sqlalchemy import update
+
         from app.dependencies import async_session
         from app.models.agent_run import AgentRun
-        from sqlalchemy import update
         async with async_session() as db:
             result = await db.execute(
                 update(AgentRun)
@@ -45,14 +46,16 @@ async def lifespan(app: FastAPI):
     # Sync tools to DB (built-in + custom defaults)
     try:
         import inspect
-        from app.dependencies import async_session as _as
-        from app.models.tool import Tool
-        from app.tools.registry import BUILTIN_TOOLS
+
         from sqlalchemy import select as _sel
 
+        from app.dependencies import async_session as _as
+        from app.models.tool import Tool
+        from app.tools.cache import CacheDeleteTool, CacheGetTool, CacheListTool, CacheSetTool
+        from app.tools.registry import BUILTIN_TOOLS
+
         # Tools that should be custom (editable) with their source code
-        from app.tools.send_telegram import SendTelegramTool, SendTelegramPhotoTool, SendTelegramMediaGroupTool
-        from app.tools.cache import CacheSetTool, CacheGetTool, CacheDeleteTool, CacheListTool
+        from app.tools.send_telegram import SendTelegramMediaGroupTool, SendTelegramPhotoTool, SendTelegramTool
         from app.tools.yad2_search import Yad2SearchTool
 
         custom_tool_classes = [
@@ -95,8 +98,8 @@ async def lifespan(app: FastAPI):
                     if not existing.code:
                         try:
                             existing.code = inspect.getsource(inspect.getmodule(type(tool_impl)))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            await logger.adebug("tool_source_unavailable", tool=tool_impl.name, error=str(e))
                 else:
                     try:
                         source = inspect.getsource(inspect.getmodule(type(tool_impl)))

@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +50,7 @@ async def get_tool_source(tool_id: UUID, db: AsyncSession = Depends(get_db)):
     if tool.is_builtin:
         try:
             import inspect
+
             from app.tools.registry import get_tool as get_builtin
             builtin = get_builtin(tool.name)
             if builtin:

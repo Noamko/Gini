@@ -1,10 +1,10 @@
 """Tool registry — core built-in tools only. Other tools live in the DB as custom tools."""
 from app.tools.base import BaseTool
+from app.tools.delegate_task import DelegateTaskTool
 from app.tools.read_file import ReadFileTool
-from app.tools.write_file import WriteFileTool
 from app.tools.run_shell import RunShellTool
 from app.tools.web_fetch import WebFetchTool
-from app.tools.delegate_task import DelegateTaskTool
+from app.tools.write_file import WriteFileTool
 
 # Core built-in tools (not editable from UI)
 BUILTIN_TOOLS: list[BaseTool] = [
@@ -35,9 +35,10 @@ async def get_all_tool_specs() -> list[dict]:
     """Get tool specs for ALL tools (built-in + active custom from DB)."""
     specs = get_llm_tool_specs()
 
+    from sqlalchemy import select
+
     from app.dependencies import async_session
     from app.models.tool import Tool
-    from sqlalchemy import select
     async with async_session() as db:
         result = await db.execute(
             select(Tool).where(Tool.is_active == True).where(Tool.is_builtin == False).where(Tool.code.isnot(None))

@@ -1,9 +1,9 @@
 """Event model for event bus persistence and HITL audit trail."""
-from sqlalchemy import String, Text
+from sqlalchemy import String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDMixin
-from sqlalchemy.orm import Mapped, mapped_column
 
 
 class Event(Base, UUIDMixin, TimestampMixin):

@@ -10,10 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.dependencies import get_db
-from app.models.webhook import Webhook
 from app.models.agent import Agent
 from app.models.agent_run import AgentRun
-from app.schemas.webhook import WebhookCreate, WebhookUpdate, WebhookResponse
+from app.models.webhook import Webhook
+from app.schemas.webhook import WebhookCreate, WebhookResponse, WebhookUpdate
 
 logger = structlog.get_logger("webhooks")
 
