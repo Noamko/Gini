@@ -1,7 +1,5 @@
 """Event and HITL approval REST endpoints."""
 from uuid import UUID
-
-import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,8 +8,6 @@ from app.dependencies import get_db
 from app.event_bus.hitl import get_pending_approvals, resolve_approval
 from app.models.event import Event
 from app.schemas.event import ApprovalResponse, EventResponse
-
-logger = structlog.get_logger("events_api")
 
 router = APIRouter(prefix="/api", tags=["events"])
 
@@ -34,13 +30,13 @@ async def list_events(
 
 @router.get("/approvals/pending")
 async def list_pending_approvals(conversation_id: str | None = None):
-    pending = get_pending_approvals(conversation_id)
+    pending = await get_pending_approvals(conversation_id)
     return [
         {
-            "id": p.id,
-            "tool_name": p.tool_name,
-            "arguments": p.arguments,
-            "conversation_id": p.conversation_id,
+            "id": p["id"],
+            "tool_name": p["tool_name"],
+            "arguments": p["arguments"],
+            "conversation_id": p["conversation_id"],
         }
         for p in pending
     ]

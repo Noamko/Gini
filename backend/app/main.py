@@ -11,6 +11,25 @@ from app.observability.logging import setup_logging
 from app.observability.middleware import CorrelationIdMiddleware, RateLimitMiddleware, RequestLoggingMiddleware
 
 
+async def _normalize_db_owned_tool(logger, db, tool_name: str) -> None:
+    """Ensure a DB-owned tool executes its stored code rather than an import path."""
+    from sqlalchemy import select
+
+    from app.models.tool import Tool
+
+    result = await db.execute(select(Tool).where(Tool.name == tool_name))
+    tool = result.scalar_one_or_none()
+    if not tool:
+        return
+
+    if tool.is_builtin:
+        tool.is_builtin = False
+
+    if tool.implementation != "custom" and tool.code:
+        tool.implementation = "custom"
+        await logger.ainfo("tool_normalized_to_db_owned", tool=tool_name)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger = structlog.get_logger("lifespan")
@@ -56,12 +75,10 @@ async def lifespan(app: FastAPI):
 
         # Tools that should be custom (editable) with their source code
         from app.tools.send_telegram import SendTelegramMediaGroupTool, SendTelegramPhotoTool, SendTelegramTool
-        from app.tools.yad2_search import Yad2SearchTool
 
         custom_tool_classes = [
             SendTelegramTool(), SendTelegramPhotoTool(), SendTelegramMediaGroupTool(),
             CacheSetTool(), CacheGetTool(), CacheDeleteTool(), CacheListTool(),
-            Yad2SearchTool(),
         ]
 
         async with _as() as db:
@@ -115,6 +132,7 @@ async def lifespan(app: FastAPI):
                         code=source,
                     ))
 
+            await _normalize_db_owned_tool(logger, db, "yad2_search")
             await db.commit()
         await logger.ainfo("tools_synced")
     except Exception as e:

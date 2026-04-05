@@ -17,11 +17,12 @@ from app.dependencies import async_session, get_db, redis_client
 from app.models.agent import Agent
 from app.models.agent_run import AgentRun
 from app.schemas.agent_run import AgentRunCreate, AgentRunResponse
+from app.services.autonomous_execution import (
+    AutonomousContext,
+    run_autonomous_round,
+)
+from app.services.execution_prep import prepare_autonomous_resources
 from app.services.agent_orchestrator import STATE_ERROR, STATE_EXECUTING, STATE_IDLE, STATE_THINKING, set_agent_state
-from app.services.llm_gateway import LLMResponse, llm_gateway
-from app.services.skill_executor import get_assembled_prompt_with_credentials
-from app.services.tool_runner import execute_tool
-from app.tools.registry import get_all_tool_specs
 
 logger = structlog.get_logger("runs")
 
@@ -41,6 +42,29 @@ async def _set_run_signal(run_id: str, signal: str | None):
         await redis_client.set(f"{RUN_SIGNAL_PREFIX}{run_id}", signal, ex=3600)
     else:
         await redis_client.delete(f"{RUN_SIGNAL_PREFIX}{run_id}")
+
+
+def _build_runtime_state(
+    *,
+    messages: list[dict],
+    steps: list[dict],
+    total_input: int,
+    total_output: int,
+    total_cost: float,
+    next_round: int,
+    workspace_path: str,
+    elapsed_ms: float = 0.0,
+) -> dict:
+    return {
+        "messages": messages,
+        "steps": steps,
+        "total_input": total_input,
+        "total_output": total_output,
+        "total_cost": total_cost,
+        "next_round": next_round,
+        "workspace_path": workspace_path,
+        "elapsed_ms": elapsed_ms,
+    }
 
 
 @router.get("")
@@ -181,7 +205,7 @@ async def pause_run(run_id: UUID, db: AsyncSession = Depends(get_db)):
 
 @router.post("/{run_id}/resume")
 async def resume_run(run_id: UUID, db: AsyncSession = Depends(get_db)):
-    """Resume a paused agent."""
+    """Resume a paused agent from its persisted runtime state."""
     run = await db.get(AgentRun, run_id)
     if not run:
         raise HTTPException(404, "Run not found")
@@ -197,6 +221,14 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
     """Execute an agent run in the background."""
     await logger.ainfo("run_starting", run_id=run_id, agent_id=agent_id)
     start = time.perf_counter()
+    steps: list[dict] = []
+    total_input = 0
+    total_output = 0
+    total_cost = 0.0
+    work_dir: str | None = None
+    cleanup_workspace = True
+    original_dir = os.getcwd()
+    base_duration_ms = 0.0
 
     try:
         async with async_session() as db:
@@ -209,6 +241,8 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
                 return
 
             agent = run.agent
+            restoring = run.status == "paused" and bool(run.runtime_state)
+            runtime_state = run.runtime_state or {}
             run.status = "running"
             await db.commit()
     except Exception as e:
@@ -217,38 +251,62 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
 
     await set_agent_state(agent_id, STATE_THINKING)
 
-    # Run in a temp directory so file writes don't pollute the app dir
-    work_dir = tempfile.mkdtemp(prefix=f"gini-run-{run_id[:8]}-")
-    original_dir = os.getcwd()
+    # Preserve the run workspace across pause/resume boundaries.
+    if restoring and runtime_state.get("workspace_path") and os.path.isdir(runtime_state["workspace_path"]):
+        work_dir = runtime_state["workspace_path"]
+    else:
+        work_dir = tempfile.mkdtemp(prefix=f"gini-run-{run_id[:8]}-")
     os.chdir(work_dir)
 
     try:
-        # Build prompt (with credentials injected for background execution)
         instructions = run.instructions or f"You are {agent.name}. Execute your primary function and report the result."
-        system_prompt = await get_assembled_prompt_with_credentials(agent)
+        resources = await prepare_autonomous_resources(agent)
 
-        tool_specs = await get_all_tool_specs()
-        messages = [{"role": "user", "content": instructions}]
+        if restoring:
+            context = AutonomousContext(
+                messages=runtime_state.get("messages") or [{"role": "user", "content": instructions}],
+                steps=runtime_state.get("steps") or [],
+                total_input_tokens=int(runtime_state.get("total_input", 0)),
+                total_output_tokens=int(runtime_state.get("total_output", 0)),
+                total_cost_usd=float(runtime_state.get("total_cost", 0.0)),
+            )
+            steps = runtime_state.get("steps") or []
+            start_round = int(runtime_state.get("next_round", 0))
+            base_duration_ms = float(runtime_state.get("elapsed_ms", 0.0))
+        else:
+            context = AutonomousContext(messages=[{"role": "user", "content": instructions}])
+            start_round = 0
+            base_duration_ms = 0.0
+            async with async_session() as db:
+                r = await db.get(AgentRun, UUID(run_id))
+                if r:
+                    r.runtime_state = _build_runtime_state(
+                        messages=context.messages,
+                        steps=context.steps,
+                        total_input=context.total_input_tokens,
+                        total_output=context.total_output_tokens,
+                        total_cost=context.total_cost_usd,
+                        next_round=0,
+                        workspace_path=work_dir,
+                        elapsed_ms=base_duration_ms,
+                    )
+                    await db.commit()
 
-        total_input = 0
-        total_output = 0
-        total_cost = 0.0
-        steps = []
-
-        for round_num in range(MAX_ROUNDS):
+        for round_num in range(start_round, MAX_ROUNDS):
             # Check for stop/pause signals
             signal = await _check_run_signal(run_id)
             if signal == "stop":
-                duration_ms = round((time.perf_counter() - start) * 1000, 2)
+                duration_ms = round(base_duration_ms + (time.perf_counter() - start) * 1000, 2)
                 async with async_session() as db:
                     r = await db.get(AgentRun, UUID(run_id))
                     r.status = "failed"
                     r.error = "Stopped by user"
                     r.duration_ms = duration_ms
-                    r.steps = steps
-                    r.input_tokens = total_input
-                    r.output_tokens = total_output
-                    r.cost_usd = total_cost
+                    r.steps = context.steps
+                    r.input_tokens = context.total_input_tokens
+                    r.output_tokens = context.total_output_tokens
+                    r.cost_usd = context.total_cost_usd
+                    r.runtime_state = {}
                     await db.commit()
                 await _set_run_signal(run_id, None)
                 await set_agent_state(agent_id, STATE_IDLE)
@@ -258,127 +316,109 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
                 async with async_session() as db:
                     r = await db.get(AgentRun, UUID(run_id))
                     r.status = "paused"
-                    r.steps = steps
-                    r.input_tokens = total_input
-                    r.output_tokens = total_output
-                    r.cost_usd = total_cost
+                    r.steps = context.steps
+                    r.input_tokens = context.total_input_tokens
+                    r.output_tokens = context.total_output_tokens
+                    r.cost_usd = context.total_cost_usd
+                    r.runtime_state = _build_runtime_state(
+                        messages=context.messages,
+                        steps=context.steps,
+                        total_input=context.total_input_tokens,
+                        total_output=context.total_output_tokens,
+                        total_cost=context.total_cost_usd,
+                        next_round=round_num,
+                        workspace_path=work_dir,
+                        elapsed_ms=round(base_duration_ms + (time.perf_counter() - start) * 1000, 2),
+                    )
                     await db.commit()
+                cleanup_workspace = False
                 await set_agent_state(agent_id, STATE_IDLE)
                 await logger.ainfo("run_paused", run_id=run_id)
-                return  # execution stops; resume will re-fire _execute_run
+                return
 
             await set_agent_state(agent_id, STATE_THINKING)
 
-            response: LLMResponse = await llm_gateway.call_with_tools(
-                messages=messages,
-                system_prompt=system_prompt,
-                tools=tool_specs if tool_specs else None,
-                provider=agent.llm_provider,
-                model=agent.llm_model,
-                temperature=agent.temperature,
-                max_tokens=agent.max_tokens,
+            async def delegate_task_runner(agent_name: str, task: str) -> dict:
+                from app.services.agent_orchestrator import get_agent_by_name, run_sub_agent
+
+                sub_agent = await get_agent_by_name(agent_name)
+                if not sub_agent:
+                    return {
+                        "success": False,
+                        "content": f"Error: Agent '{agent_name}' not found.",
+                        "cost_usd": 0.0,
+                    }
+                return await run_sub_agent(
+                    agent=sub_agent,
+                    task=task,
+                    parent_conversation_id=f"run:{run_id}",
+                )
+
+            round_result = await run_autonomous_round(
+                agent=agent,
+                resources=resources,
+                context=context,
+                round_num=round_num,
+                delegate_task_runner=delegate_task_runner,
+                on_before_tools=lambda: set_agent_state(agent_id, STATE_EXECUTING),
             )
-
-            total_input += response.input_tokens
-            total_output += response.output_tokens
-            total_cost += response.cost_usd
-
-            steps.append({
-                "type": "llm_call",
-                "round": round_num,
-                "content": (response.content or "")[:1000],
-                "tool_calls": len(response.tool_calls) if response.tool_calls else 0,
-                "tokens": response.input_tokens + response.output_tokens,
-            })
 
             # Update progress in DB so the UI can show steps
             async with async_session() as db:
                 r = await db.get(AgentRun, UUID(run_id))
-                r.steps = list(steps)
-                r.input_tokens = total_input
-                r.output_tokens = total_output
-                r.cost_usd = total_cost
+                r.steps = list(context.steps)
+                r.input_tokens = context.total_input_tokens
+                r.output_tokens = context.total_output_tokens
+                r.cost_usd = context.total_cost_usd
+                r.runtime_state = _build_runtime_state(
+                    messages=context.messages,
+                    steps=context.steps,
+                    total_input=context.total_input_tokens,
+                    total_output=context.total_output_tokens,
+                    total_cost=context.total_cost_usd,
+                    next_round=round_num + (0 if round_result.done else 1),
+                    workspace_path=work_dir,
+                    elapsed_ms=round(base_duration_ms + (time.perf_counter() - start) * 1000, 2),
+                )
                 await db.commit()
 
-            if not response.tool_calls:
+            if round_result.done:
                 # Done
-                duration_ms = round((time.perf_counter() - start) * 1000, 2)
+                duration_ms = round(base_duration_ms + (time.perf_counter() - start) * 1000, 2)
                 async with async_session() as db:
                     r = await db.get(AgentRun, UUID(run_id))
                     r.status = "done"
-                    r.result = response.content
-                    r.input_tokens = total_input
-                    r.output_tokens = total_output
-                    r.cost_usd = total_cost
+                    r.result = round_result.final_content
+                    r.input_tokens = context.total_input_tokens
+                    r.output_tokens = context.total_output_tokens
+                    r.cost_usd = context.total_cost_usd
                     r.duration_ms = duration_ms
-                    r.steps = steps
+                    r.steps = context.steps
+                    r.runtime_state = {}
                     await db.commit()
 
                 await set_agent_state(agent_id, STATE_IDLE)
-                await logger.ainfo("run_completed", run_id=run_id, agent=agent.name, cost=total_cost, duration_ms=duration_ms)
+                await logger.ainfo("run_completed", run_id=run_id, agent=agent.name, cost=context.total_cost_usd, duration_ms=duration_ms)
                 return
 
-            # Execute tools
-            await set_agent_state(agent_id, STATE_EXECUTING)
-
-            assistant_content = []
-            if response.content:
-                assistant_content.append({"type": "text", "text": response.content})
-            for tc in response.tool_calls:
-                assistant_content.append({
-                    "type": "tool_use",
-                    "id": tc["id"],
-                    "name": tc["name"],
-                    "input": tc["arguments"],
-                })
-            messages.append({"role": "assistant", "content": assistant_content})
-
-            tool_results_content = []
-            for tc in response.tool_calls:
-                tool_result = await execute_tool(tc["name"], tc["arguments"], use_sandbox=True, allow_network=True)
-                tool_output = tool_result.output if tool_result.success else f"Error: {tool_result.error}"
-                tool_results_content.append({
-                    "type": "tool_result",
-                    "tool_use_id": tc["id"],
-                    "content": tool_output[:10000],
-                })
-                steps.append({
-                    "type": "tool_call",
-                    "tool": tc["name"],
-                    "arguments": tc["arguments"],
-                    "success": tool_result.success,
-                    "output": (tool_result.output or "")[:2000],
-                    "error": tool_result.error,
-                })
-
-            messages.append({"role": "user", "content": tool_results_content})
-
-            # Update progress after tool calls
-            async with async_session() as db:
-                r = await db.get(AgentRun, UUID(run_id))
-                r.steps = list(steps)
-                r.input_tokens = total_input
-                r.output_tokens = total_output
-                r.cost_usd = total_cost
-                await db.commit()
-
         # Exceeded rounds
-        duration_ms = round((time.perf_counter() - start) * 1000, 2)
+        duration_ms = round(base_duration_ms + (time.perf_counter() - start) * 1000, 2)
         async with async_session() as db:
             r = await db.get(AgentRun, UUID(run_id))
             r.status = "failed"
             r.error = f"Exceeded max rounds ({MAX_ROUNDS})"
-            r.input_tokens = total_input
-            r.output_tokens = total_output
-            r.cost_usd = total_cost
+            r.input_tokens = context.total_input_tokens
+            r.output_tokens = context.total_output_tokens
+            r.cost_usd = context.total_cost_usd
             r.duration_ms = duration_ms
-            r.steps = steps
+            r.steps = context.steps
+            r.runtime_state = {}
             await db.commit()
 
         await set_agent_state(agent_id, STATE_ERROR)
 
     except Exception as e:
-        duration_ms = round((time.perf_counter() - start) * 1000, 2)
+        duration_ms = round(base_duration_ms + (time.perf_counter() - start) * 1000, 2)
         await logger.aerror("run_failed", run_id=run_id, error=str(e))
         async with async_session() as db:
             r = await db.get(AgentRun, UUID(run_id))
@@ -386,11 +426,15 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
                 r.status = "failed"
                 r.error = str(e)[:2000]
                 r.duration_ms = duration_ms
-                r.steps = steps if 'steps' in dir() else []
+                r.steps = context.steps if "context" in locals() else steps
+                r.input_tokens = context.total_input_tokens if "context" in locals() else total_input
+                r.output_tokens = context.total_output_tokens if "context" in locals() else total_output
+                r.cost_usd = context.total_cost_usd if "context" in locals() else total_cost
+                r.runtime_state = {}
                 await db.commit()
 
         await set_agent_state(agent_id, STATE_ERROR)
     finally:
         os.chdir(original_dir)
-        shutil.rmtree(work_dir, ignore_errors=True)
-
+        if cleanup_workspace and work_dir:
+            shutil.rmtree(work_dir, ignore_errors=True)

@@ -11,9 +11,11 @@ from app.event_bus.bus import event_bus
 from app.event_bus.events import EventTypes
 from app.models.agent import Agent
 from app.models.agent_run import AgentRun
-from app.services.llm_gateway import LLMResponse, llm_gateway
-from app.services.skill_executor import get_assembled_prompt_with_credentials
-from app.tools.registry import get_all_tool_specs
+from app.services.autonomous_execution import (
+    AutonomousContext,
+    run_autonomous_round,
+)
+from app.services.execution_prep import prepare_autonomous_resources
 
 logger = structlog.get_logger("orchestrator")
 
@@ -111,36 +113,37 @@ async def run_sub_agent(
         source=f"agent:{agent.name}",
     )
 
-    system_prompt = await get_assembled_prompt_with_credentials(agent)
-
-    tool_specs = await get_all_tool_specs()
-
-    messages = [{"role": "user", "content": task}]
-
-    total_input_tokens = 0
-    total_output_tokens = 0
-    total_cost = 0.0
+    resources = await prepare_autonomous_resources(agent)
+    context = AutonomousContext(messages=[{"role": "user", "content": task}])
 
     try:
-        for _round_num in range(MAX_DELEGATION_ROUNDS):
+        for round_num in range(MAX_DELEGATION_ROUNDS):
             await set_agent_state(str(agent.id), STATE_THINKING)
 
-            response: LLMResponse = await llm_gateway.call_with_tools(
-                messages=messages,
-                system_prompt=system_prompt,
-                tools=tool_specs if tool_specs else None,
-                provider=agent.llm_provider,
-                model=agent.llm_model,
-                temperature=agent.temperature,
-                max_tokens=agent.max_tokens,
+            async def delegate_task_runner(agent_name: str, task_text: str) -> dict:
+                sub_agent = await get_agent_by_name(agent_name)
+                if not sub_agent:
+                    return {
+                        "success": False,
+                        "content": f"Error: Agent '{agent_name}' not found.",
+                        "cost_usd": 0.0,
+                    }
+                return await run_sub_agent(
+                    agent=sub_agent,
+                    task=task_text,
+                    parent_conversation_id=parent_conversation_id,
+                )
+
+            round_result = await run_autonomous_round(
+                agent=agent,
+                resources=resources,
+                context=context,
+                round_num=round_num,
+                delegate_task_runner=delegate_task_runner,
+                on_before_tools=lambda: set_agent_state(str(agent.id), STATE_EXECUTING),
             )
 
-            total_input_tokens += response.input_tokens
-            total_output_tokens += response.output_tokens
-            total_cost += response.cost_usd
-
-            if not response.tool_calls:
-                # Sub-agent is done
+            if round_result.done:
                 duration_ms = round((time.perf_counter() - start) * 1000, 2)
 
                 # Update run record
@@ -148,10 +151,10 @@ async def run_sub_agent(
                     r = await db.get(AgentRun, run_id)
                     if r:
                         r.status = "done"
-                        r.result = response.content
-                        r.input_tokens = total_input_tokens
-                        r.output_tokens = total_output_tokens
-                        r.cost_usd = total_cost
+                        r.result = round_result.final_content
+                        r.input_tokens = context.total_input_tokens
+                        r.output_tokens = context.total_output_tokens
+                        r.cost_usd = context.total_cost_usd
                         r.duration_ms = duration_ms
                         await db.commit()
 
@@ -160,9 +163,9 @@ async def run_sub_agent(
                     EventTypes.AGENT_COMPLETED,
                     payload={
                         "agent_name": agent.name,
-                        "input_tokens": total_input_tokens,
-                        "output_tokens": total_output_tokens,
-                        "cost_usd": total_cost,
+                        "input_tokens": context.total_input_tokens,
+                        "output_tokens": context.total_output_tokens,
+                        "cost_usd": context.total_cost_usd,
                         "duration_ms": duration_ms,
                     },
                     conversation_id=parent_conversation_id,
@@ -171,44 +174,14 @@ async def run_sub_agent(
 
                 return {
                     "success": True,
-                    "content": response.content,
+                    "content": round_result.final_content,
                     "agent_name": agent.name,
-                    "model": response.model,
-                    "input_tokens": total_input_tokens,
-                    "output_tokens": total_output_tokens,
-                    "cost_usd": total_cost,
+                    "model": round_result.response.model,
+                    "input_tokens": context.total_input_tokens,
+                    "output_tokens": context.total_output_tokens,
+                    "cost_usd": context.total_cost_usd,
                     "duration_ms": duration_ms,
                 }
-
-            # Sub-agent wants to use tools — execute them
-            await set_agent_state(str(agent.id), STATE_EXECUTING)
-
-            assistant_content = []
-            if response.content:
-                assistant_content.append({"type": "text", "text": response.content})
-            for tc in response.tool_calls:
-                assistant_content.append({
-                    "type": "tool_use",
-                    "id": tc["id"],
-                    "name": tc["name"],
-                    "input": tc["arguments"],
-                })
-            messages.append({"role": "assistant", "content": assistant_content})
-
-            # Execute tools (no HITL for sub-agents — they run with pre-approved tools)
-            from app.services.tool_runner import execute_tool
-
-            tool_results_content = []
-            for tc in response.tool_calls:
-                result = await execute_tool(tc["name"], tc["arguments"], use_sandbox=True, allow_network=True)
-                tool_output = result.output if result.success else f"Error: {result.error}"
-                tool_results_content.append({
-                    "type": "tool_result",
-                    "tool_use_id": tc["id"],
-                    "content": tool_output[:10000],
-                })
-
-            messages.append({"role": "user", "content": tool_results_content})
 
         # Exhausted rounds
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
@@ -217,7 +190,7 @@ async def run_sub_agent(
             if r:
                 r.status = "failed"
                 r.error = f"Exceeded max rounds ({MAX_DELEGATION_ROUNDS})"
-                r.cost_usd = total_cost
+                r.cost_usd = context.total_cost_usd
                 r.duration_ms = duration_ms
                 await db.commit()
 
@@ -226,7 +199,7 @@ async def run_sub_agent(
             "success": False,
             "content": f"Sub-agent {agent.name} exceeded max rounds ({MAX_DELEGATION_ROUNDS})",
             "agent_name": agent.name,
-            "cost_usd": total_cost,
+            "cost_usd": context.total_cost_usd,
         }
 
     except Exception as e:
@@ -236,7 +209,7 @@ async def run_sub_agent(
             if r:
                 r.status = "failed"
                 r.error = str(e)[:2000]
-                r.cost_usd = total_cost
+                r.cost_usd = context.total_cost_usd
                 r.duration_ms = duration_ms
                 await db.commit()
 
@@ -246,5 +219,5 @@ async def run_sub_agent(
             "success": False,
             "content": f"Sub-agent error: {str(e)}",
             "agent_name": agent.name,
-            "cost_usd": total_cost,
+            "cost_usd": context.total_cost_usd,
         }

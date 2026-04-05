@@ -17,7 +17,7 @@ class Message(Base, UUIDMixin, TimestampMixin):
     )
     role: Mapped[str] = mapped_column(String(50), nullable=False)  # user, assistant, system, tool
     content: Mapped[str | None] = mapped_column(Text)
-    tool_calls: Mapped[dict | None] = mapped_column(JSONB)
+    tool_calls: Mapped[list | dict | None] = mapped_column(JSONB)
     tool_call_id: Mapped[str | None] = mapped_column(String(255))
     token_count: Mapped[int | None] = mapped_column(Integer)
     model_used: Mapped[str | None] = mapped_column(String(100))

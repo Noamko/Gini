@@ -13,10 +13,13 @@ from app.models.agent import Agent
 from app.models.agent_run import AgentRun
 from app.models.conversation import Conversation
 from app.models.message import Message
-from app.services.llm_gateway import LLMResponse, llm_gateway
-from app.services.skill_executor import get_assembled_prompt, get_assembled_prompt_with_credentials
-from app.services.tool_runner import execute_tool
-from app.tools.registry import get_all_tool_specs
+from app.services import conversation_service
+from app.services.agent_orchestrator import get_agent_by_name, run_sub_agent
+from app.services.autonomous_execution import (
+    AutonomousContext,
+    run_autonomous_round,
+)
+from app.services.execution_prep import ExecutionResources, prepare_autonomous_resources
 
 logger = structlog.get_logger("telegram")
 
@@ -449,16 +452,19 @@ class TelegramBot:
                 await self._send_message(chat_id, "No agent configured. Please set up a main agent in Gini.")
                 return
 
-            prompt_fn = get_assembled_prompt_with_credentials if agent.auto_approve else get_assembled_prompt
-            system_prompt = await prompt_fn(agent)
-
             messages = await self._load_history(conversation_id)
             messages.append({"role": "user", "content": text})
 
             await self._persist_message(conversation_id, role="user", content=text)
 
-            tool_specs = await get_all_tool_specs()
-            response_text = await self._run_agent(agent, messages, system_prompt, tool_specs, conversation_id=str(conversation_id))
+            resources = await prepare_autonomous_resources(agent)
+            response_text = await self._run_agent(
+                agent,
+                messages,
+                resources,
+                conversation_id=str(conversation_id),
+                conversation_id_obj=conversation_id,
+            )
 
             await self._persist_message(conversation_id, role="assistant", content=response_text)
             await self._send_long_message(chat_id, response_text)
@@ -470,59 +476,70 @@ class TelegramBot:
     # ── Agent loop ──────────────────────────────────────────────────
 
     async def _run_agent(
-        self, agent: Agent, messages: list[dict], system_prompt: str, tool_specs: list[dict],
+        self,
+        agent: Agent,
+        messages: list[dict],
+        resources: ExecutionResources,
         conversation_id: str | None = None,
+        conversation_id_obj: UUID | None = None,
     ) -> str:
-        for _round_num in range(MAX_TOOL_ROUNDS):
-            response: LLMResponse = await llm_gateway.call_with_tools(
-                messages=messages,
-                system_prompt=system_prompt,
-                tools=tool_specs if tool_specs else None,
-                provider=agent.llm_provider,
-                model=agent.llm_model,
-                temperature=agent.temperature,
-                max_tokens=agent.max_tokens,
+        context = AutonomousContext(messages=messages)
+        for round_num in range(MAX_TOOL_ROUNDS):
+            async def persist_tool_round(content: str | None, assistant_content: list[dict]) -> None:
+                if conversation_id_obj:
+                    await self._persist_message(
+                        conversation_id_obj,
+                        role="assistant",
+                        content=content or "",
+                        tool_calls=[
+                            block
+                            for block in assistant_content
+                            if block.get("type") == "tool_use"
+                        ],
+                        metadata={"hidden_from_ui": True, "message_kind": "tool_round"},
+                    )
+
+            async def persist_tool_result(
+                tool_name: str,
+                tc: dict,
+                tool_output: str,
+                _success: bool,
+                _error: str | None,
+            ) -> None:
+                if conversation_id_obj:
+                    await self._persist_message(
+                        conversation_id_obj,
+                        role="tool",
+                        content=tool_output[:10000],
+                        tool_call_id=tc["id"],
+                        metadata={"hidden_from_ui": True, "tool_name": tool_name},
+                    )
+
+            async def delegate_task_runner(agent_name: str, task: str) -> dict:
+                sub_agent = await get_agent_by_name(agent_name)
+                if not sub_agent:
+                    return {
+                        "success": False,
+                        "content": f"Error: Agent '{agent_name}' not found.",
+                        "cost_usd": 0.0,
+                    }
+                return await run_sub_agent(
+                    agent=sub_agent,
+                    task=task,
+                    parent_conversation_id=conversation_id or "unknown",
+                )
+
+            round_result = await run_autonomous_round(
+                agent=agent,
+                resources=resources,
+                context=context,
+                round_num=round_num,
+                delegate_task_runner=delegate_task_runner,
+                on_tool_round_persist=persist_tool_round,
+                on_tool_result=persist_tool_result,
             )
-
-            if not response.tool_calls:
-                return response.content or "(no response)"
-
-            assistant_content = []
-            if response.content:
-                assistant_content.append({"type": "text", "text": response.content})
-            for tc in response.tool_calls:
-                assistant_content.append({
-                    "type": "tool_use",
-                    "id": tc["id"],
-                    "name": tc["name"],
-                    "input": tc["arguments"],
-                })
-            messages.append({"role": "assistant", "content": assistant_content})
-
-            tool_results = []
-            for tc in response.tool_calls:
-                if tc["name"] == "delegate_task":
-                    # Handle delegation inline
-                    from app.services.agent_orchestrator import get_agent_by_name, run_sub_agent
-                    sub_agent_name = tc["arguments"].get("agent_name", "")
-                    task = tc["arguments"].get("task", "")
-                    sub_agent = await get_agent_by_name(sub_agent_name)
-                    if sub_agent:
-                        delegation_result = await run_sub_agent(
-                            agent=sub_agent, task=task, parent_conversation_id=conversation_id or "unknown",
-                        )
-                        tool_output = delegation_result.get("content", "No result")
-                    else:
-                        tool_output = f"Error: Agent '{sub_agent_name}' not found."
-                else:
-                    result = await execute_tool(tc["name"], tc["arguments"], use_sandbox=False)
-                    tool_output = result.output if result.success else f"Error: {result.error}"
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tc["id"],
-                    "content": tool_output[:10000],
-                })
-            messages.append({"role": "user", "content": tool_results})
+            if round_result.done:
+                return round_result.final_content or "(no response)"
 
         return "I exceeded the maximum number of steps. Please try a simpler request."
 
@@ -576,18 +593,54 @@ class TelegramBot:
             result = await db.execute(
                 select(Message)
                 .where(Message.conversation_id == conversation_id)
-                .where(Message.role.in_(["user", "assistant"]))
                 .order_by(Message.created_at.desc())
                 .limit(limit)
             )
             db_messages = list(reversed(result.scalars().all()))
-            return [{"role": m.role, "content": m.content or ""} for m in db_messages]
+            messages = []
+            pending_tool_results: list[dict] = []
+
+            def flush_tool_results() -> None:
+                if pending_tool_results:
+                    messages.append({"role": "user", "content": list(pending_tool_results)})
+                    pending_tool_results.clear()
+
+            for m in db_messages:
+                if m.role == "tool":
+                    pending_tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": m.tool_call_id or "",
+                        "content": m.content or "",
+                    })
+                    continue
+
+                flush_tool_results()
+
+                if m.role == "assistant" and m.tool_calls:
+                    assistant_content = []
+                    if m.content:
+                        assistant_content.append({"type": "text", "text": m.content})
+                    raw_tool_calls = m.tool_calls if isinstance(m.tool_calls, list) else [m.tool_calls]
+                    for tc in raw_tool_calls:
+                        if not isinstance(tc, dict):
+                            continue
+                        assistant_content.append({
+                            "type": "tool_use",
+                            "id": tc.get("id", ""),
+                            "name": tc.get("name", ""),
+                            "input": tc.get("input", {}),
+                        })
+                    if assistant_content:
+                        messages.append({"role": "assistant", "content": assistant_content})
+                elif m.role in ("user", "assistant"):
+                    messages.append({"role": m.role, "content": m.content or ""})
+
+            flush_tool_results()
+            return messages
 
     async def _persist_message(self, conversation_id: UUID, **kwargs):
         async with async_session() as db:
-            msg = Message(conversation_id=conversation_id, **kwargs)
-            db.add(msg)
-            await db.commit()
+            await conversation_service.create_message(db, conversation_id=conversation_id, **kwargs)
 
     async def _send_message(self, chat_id: int, text: str):
         async with httpx.AsyncClient(timeout=10) as client:

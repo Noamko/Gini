@@ -9,7 +9,7 @@ from app.schemas.common import IDTimestampMixin
 class MessageCreate(BaseModel):
     role: str
     content: str | None = None
-    tool_calls: dict | None = None
+    tool_calls: list | dict | None = None
     tool_call_id: str | None = None
     token_count: int | None = None
     model_used: str | None = None
@@ -21,7 +21,7 @@ class MessageResponse(IDTimestampMixin):
     conversation_id: UUID
     role: str
     content: str | None
-    tool_calls: dict | None
+    tool_calls: list | dict | None
     tool_call_id: str | None
     token_count: int | None
     model_used: str | None

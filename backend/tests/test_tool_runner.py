@@ -1,7 +1,8 @@
 """Tests for tool execution logic."""
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from app.services.tool_runner import execute_tool
+from app.services.tool_runner import _run_custom_inprocess, execute_tool
 from app.tools.base import ToolResult
 
 
@@ -35,3 +36,24 @@ async def test_execute_tool_tracks_duration():
     result = await execute_tool("read_file", {"path": "/dev/null"})
     assert "duration_ms" in result.metadata
     assert isinstance(result.metadata["duration_ms"], float)
+
+
+async def test_run_custom_inprocess_supports_class_based_tool_code():
+    db_tool = SimpleNamespace(
+        name="class_based_tool",
+        implementation="custom",
+        code="""
+from app.tools.base import BaseTool, ToolResult
+
+class ClassBasedTool(BaseTool):
+    name = "class_based_tool"
+
+    async def execute(self, city: str) -> ToolResult:
+        return ToolResult(output=f"hello {city}")
+""",
+    )
+
+    result = await _run_custom_inprocess(db_tool, {"city": "tel aviv"})
+
+    assert result.success is True
+    assert result.output == "hello tel aviv"

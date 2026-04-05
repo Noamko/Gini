@@ -24,5 +24,6 @@ class AgentRun(Base, UUIDMixin, TimestampMixin):
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     duration_ms: Mapped[float] = mapped_column(Float, default=0.0)
     steps: Mapped[list] = mapped_column(JSONB, default=list)
+    runtime_state: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     agent = relationship("Agent", lazy="selectin")

@@ -9,7 +9,6 @@ A full-stack AI assistant platform with multi-agent orchestration, tool executio
 - **Background Runs** — Execute agents in the background with live status tracking (pending/running/done/failed).
 - **Skills & Credentials** — Assign reusable skills and encrypted credentials to agents. Trusted agents get credentials injected automatically.
 - **Tool Execution** — Built-in tools: shell commands, file I/O, HTTP requests, Telegram messaging, task delegation. Sandboxed execution with configurable network access.
-- **Memory / RAG** — Semantic search over agent memories using pgvector embeddings (OpenAI text-embedding-3-small).
 - **Execution Traces** — Full observability into agent reasoning: LLM calls, tool executions, delegations, with cost and timing.
 - **Telegram Bot** — Chat with Gini from Telegram. Switch agents, run background tasks, get notified on completion.
 - **Messaging Agents** — WhatsApp and Telegram messaging via dedicated agents.

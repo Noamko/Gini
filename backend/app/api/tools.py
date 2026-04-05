@@ -86,6 +86,8 @@ async def create_tool(body: ToolCreate, db: AsyncSession = Depends(get_db)):
 async def upload_tool(
     name: str = Form(...),
     description: str = Form(""),
+    requires_sandbox: bool = Form(False),
+    requires_approval: bool = Form(False),
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
 ):
@@ -97,8 +99,8 @@ async def upload_tool(
         parameters_schema={"type": "object", "properties": {}},
         implementation="custom",
         code=code,
-        requires_sandbox=False,
-        requires_approval=False,
+        requires_sandbox=requires_sandbox,
+        requires_approval=requires_approval,
         is_builtin=False,
         is_active=True,
     )

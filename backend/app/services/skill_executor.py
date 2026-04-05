@@ -120,6 +120,13 @@ async def get_assembled_prompt_with_credentials(agent: Agent) -> str:
     return agent.system_prompt + skill_context + AUTONOMOUS_DIRECTIVE
 
 
+async def get_autonomous_prompt(agent: Agent) -> str:
+    """Get the prompt for autonomous execution, respecting agent trust."""
+    if agent.auto_approve:
+        return await get_assembled_prompt_with_credentials(agent)
+    return await get_assembled_prompt(agent) + AUTONOMOUS_DIRECTIVE
+
+
 async def invalidate_prompt_cache(agent_id: UUID) -> None:
     """Invalidate the cached prompt for an agent (call on config change)."""
     cache_key = f"{PROMPT_CACHE_PREFIX}{agent_id}"

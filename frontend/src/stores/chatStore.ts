@@ -103,7 +103,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     try {
       const data = await api.conversations.messages(id);
       const msgs: ChatMessage[] = data.items
-        .filter((m: Message) => m.role === "user" || m.role === "assistant")
+        .filter(
+          (m: Message) =>
+            (m.role === "user" || m.role === "assistant") &&
+            !m.metadata?.hidden_from_ui
+        )
         .map((m: Message) => ({
           id: m.id,
           role: m.role as "user" | "assistant",
