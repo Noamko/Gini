@@ -31,3 +31,41 @@ async def test_custom_tool_policy_respects_flags(db_session):
     finally:
         await db_session.execute(delete(Tool).where(Tool.name == "test_policy_tool"))
         await db_session.commit()
+
+
+async def test_list_tool_policies_can_filter_to_allowed_names(db_session):
+    allowed_tool = Tool(
+        name="allowed_db_tool",
+        description="allowed",
+        parameters_schema={"type": "object", "properties": {}},
+        implementation="custom",
+        code="def execute(): return 'ok'",
+        requires_sandbox=False,
+        requires_approval=False,
+        is_builtin=False,
+        is_active=True,
+    )
+    blocked_tool = Tool(
+        name="blocked_db_tool",
+        description="blocked",
+        parameters_schema={"type": "object", "properties": {}},
+        implementation="custom",
+        code="def execute(): return 'ok'",
+        requires_sandbox=False,
+        requires_approval=False,
+        is_builtin=False,
+        is_active=True,
+    )
+    db_session.add_all([allowed_tool, blocked_tool])
+    await db_session.commit()
+
+    try:
+        policies = await list_tool_policies(
+            include_approval_tools=True,
+            allowed_tool_names={"allowed_db_tool"},
+        )
+        assert "allowed_db_tool" in {p.name for p in policies}
+        assert "blocked_db_tool" not in {p.name for p in policies}
+    finally:
+        await db_session.execute(delete(Tool).where(Tool.name.in_(["allowed_db_tool", "blocked_db_tool"])))
+        await db_session.commit()

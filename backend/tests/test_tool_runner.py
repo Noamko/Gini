@@ -2,8 +2,9 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-from app.services.tool_runner import _run_custom_inprocess, execute_tool
+from app.services.tool_runner import _execute_in_sandbox, _run_custom_inprocess, execute_tool
 from app.tools.base import ToolResult
+from app.tools.run_shell import RunShellTool
 
 
 async def test_execute_builtin_tool():
@@ -57,3 +58,52 @@ class ClassBasedTool(BaseTool):
 
     assert result.success is True
     assert result.output == "hello tel aviv"
+
+
+async def test_run_shell_credentials_are_injected_as_env_vars(monkeypatch):
+    captured = {}
+
+    class FakeSandboxResult:
+        success = True
+        output = "ok"
+        exit_code = 0
+
+    async def fake_execute(*, command, timeout, allow_network, env):
+        captured["command"] = command
+        captured["timeout"] = timeout
+        captured["allow_network"] = allow_network
+        captured["env"] = env
+        return FakeSandboxResult()
+
+    monkeypatch.setattr("app.services.tool_runner.sandbox_manager.execute", fake_execute)
+
+    tool = RunShellTool()
+    result = await _execute_in_sandbox(
+        tool,
+        {
+            "command": "python - <<'PY'\nprint('hi')\nPY",
+            "timeout": 15,
+            "credential_names": ["IMAP Password"],
+        },
+        allow_network=True,
+        credential_values={"IMAP Password": "top-secret"},
+    )
+
+    assert result.success is True
+    assert captured["timeout"] == 15
+    assert captured["allow_network"] is True
+    assert captured["env"] == {"GINI_CRED_IMAP_PASSWORD": "top-secret"}
+    assert result.metadata["credential_names"] == ["IMAP Password"]
+
+
+async def test_run_shell_rejects_unknown_requested_credentials():
+    tool = RunShellTool()
+    result = await _execute_in_sandbox(
+        tool,
+        {"command": "echo hi", "credential_names": ["Missing Credential"]},
+        allow_network=False,
+        credential_values={"Known Credential": "secret"},
+    )
+
+    assert result.success is False
+    assert "Missing Credential" in result.error

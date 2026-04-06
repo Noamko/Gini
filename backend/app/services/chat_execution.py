@@ -40,6 +40,7 @@ class InteractiveToolExecutor:
         websocket: WebSocket,
         conversation_id: UUID,
         agent: Agent,
+        credentials: dict[str, str],
         incoming: asyncio.Queue,
         trace: TraceBuilder,
         persist_message: PersistMessageHook,
@@ -47,6 +48,7 @@ class InteractiveToolExecutor:
         self.websocket = websocket
         self.conversation_id = conversation_id
         self.agent = agent
+        self.credentials = credentials
         self.incoming = incoming
         self.trace = trace
         self.persist_message = persist_message
@@ -86,16 +88,22 @@ class InteractiveToolExecutor:
 
         needs_approval = (tool_policy.requires_approval if tool_policy else False) and not self.agent.auto_approve
         use_sandbox = tool_policy.requires_sandbox if tool_policy else False
+        approved_via_hitl = False
 
         if needs_approval:
             approval_result = await self._request_tool_approval(tc)
             if approval_result:
                 return approval_result
+            approved_via_hitl = True
 
         if tool_name == "delegate_task":
             return await self._run_delegation(tc)
 
-        return await self._execute_standard_tool(tc, use_sandbox=use_sandbox)
+        return await self._execute_standard_tool(
+            tc,
+            use_sandbox=use_sandbox,
+            allow_network=self.agent.auto_approve or approved_via_hitl,
+        )
 
     async def _request_tool_approval(self, tc: dict) -> ToolExecutionResult | None:
         tool_name = tc["name"]
@@ -219,7 +227,7 @@ class InteractiveToolExecutor:
             extra_cost_usd=delegation_result.get("cost_usd", 0.0),
         )
 
-    async def _execute_standard_tool(self, tc: dict, *, use_sandbox: bool) -> ToolExecutionResult:
+    async def _execute_standard_tool(self, tc: dict, *, use_sandbox: bool, allow_network: bool) -> ToolExecutionResult:
         tool_name = tc["name"]
         tool_args = tc["arguments"]
 
@@ -235,7 +243,8 @@ class InteractiveToolExecutor:
                 tool_name,
                 tool_args,
                 use_sandbox=use_sandbox,
-                allow_network=self.agent.auto_approve,
+                allow_network=allow_network,
+                credential_values=self.credentials,
             )
             step.output_data = {"success": result.success, "output": result.output}
             if result.error:
@@ -266,6 +275,7 @@ async def run_chat_agent_loop(
     messages: list[dict],
     tool_specs: list[dict],
     tool_policy_by_name: dict[str, ToolPolicy],
+    credentials: dict[str, str],
     incoming: asyncio.Queue,
     persist_message: PersistMessageHook,
     system_prompt: str = "",
@@ -282,6 +292,7 @@ async def run_chat_agent_loop(
         websocket=websocket,
         conversation_id=conversation_id,
         agent=agent,
+        credentials=credentials,
         incoming=incoming,
         trace=trace,
         persist_message=persist_message,

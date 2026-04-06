@@ -19,6 +19,7 @@ ToolResultHook = Callable[[str, dict, str, bool, str | None], Awaitable[None]]
 DelegateTaskRunner = Callable[[str, str], Awaitable[dict]]
 PhaseHook = Callable[[], Awaitable[None]]
 ToolHandler = Callable[[dict, ToolPolicy | None], Awaitable["ToolExecutionResult"]]
+ApprovalRequester = Callable[[dict, ToolPolicy | None], Awaitable[tuple[bool, str | None]]]
 
 
 @dataclass
@@ -110,6 +111,7 @@ async def run_autonomous_round(
     context: AutonomousContext,
     round_num: int,
     delegate_task_runner: DelegateTaskRunner | None = None,
+    request_tool_approval: ApprovalRequester | None = None,
     on_tool_round_persist: ToolRoundPersistHook | None = None,
     on_tool_result: ToolResultHook | None = None,
     on_before_tools: PhaseHook | None = None,
@@ -142,12 +144,23 @@ async def run_autonomous_round(
     async def autonomous_tool_handler(tc: dict, tool_policy: ToolPolicy | None) -> ToolExecutionResult:
         tool_name = tc["name"]
         tool_args = tc["arguments"]
+        approved_via_hitl = False
         if tool_policy and tool_policy.requires_approval and not agent.auto_approve:
-            return ToolExecutionResult(
-                output=f"Error: Tool '{tool_name}' requires approval and is unavailable in untrusted autonomous runs.",
-                success=False,
-                error="Approval required",
-            )
+            if not request_tool_approval:
+                return ToolExecutionResult(
+                    output=f"Error: Tool '{tool_name}' requires approval and is unavailable in this autonomous context.",
+                    success=False,
+                    error="Approval required",
+                )
+            approved, reason = await request_tool_approval(tc, tool_policy)
+            if not approved:
+                reject_reason = reason or "User rejected"
+                return ToolExecutionResult(
+                    output=f"Error: Tool execution was rejected by the user. Reason: {reject_reason}",
+                    success=False,
+                    error=f"Rejected: {reject_reason}",
+                )
+            approved_via_hitl = True
         if tool_name == "delegate_task":
             if not delegate_task_runner:
                 return ToolExecutionResult(
@@ -171,7 +184,8 @@ async def run_autonomous_round(
             tool_name,
             tool_args,
             use_sandbox=tool_policy.requires_sandbox if tool_policy else True,
-            allow_network=agent.auto_approve,
+            allow_network=agent.auto_approve or approved_via_hitl,
+            credential_values=resources.credentials,
         )
         return ToolExecutionResult(
             output=result.output if result.success else f"Error: {result.error}",

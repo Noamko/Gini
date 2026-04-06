@@ -22,7 +22,7 @@ interface AgentRun {
   id: string;
   agent_id: string;
   agent_name: string;
-  status: "pending" | "running" | "paused" | "done" | "failed";
+  status: "pending" | "running" | "paused" | "awaiting_approval" | "done" | "failed";
   instructions: string | null;
   result: string | null;
   error: string | null;
@@ -35,10 +35,18 @@ interface AgentRun {
   updated_at: string;
 }
 
+interface PendingApproval {
+  id: string;
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  run_id: string | null;
+}
+
 const STATUS_CONFIG = {
   pending: { icon: Clock, color: "text-zinc-400", bg: "bg-zinc-800", label: "Pending" },
   running: { icon: Loader2, color: "text-blue-400", bg: "bg-blue-950/30", label: "Running" },
   paused: { icon: Pause, color: "text-amber-400", bg: "bg-amber-950/30", label: "Paused" },
+  awaiting_approval: { icon: Pause, color: "text-orange-400", bg: "bg-orange-950/30", label: "Awaiting Approval" },
   done: { icon: CheckCircle, color: "text-emerald-400", bg: "bg-emerald-950/30", label: "Done" },
   failed: { icon: XCircle, color: "text-red-400", bg: "bg-red-950/30", label: "Failed" },
 };
@@ -54,9 +62,10 @@ function StatusBadge({ status }: { status: AgentRun["status"] }) {
   );
 }
 
-function RunCard({ run, expanded, onToggle, onRetry, onStop, onPause, onResume }: {
+function RunCard({ run, expanded, onToggle, onRetry, onStop, onPause, onResume, approvals, onApprove, onReject }: {
   run: AgentRun; expanded: boolean; onToggle: () => void;
   onRetry: () => void; onStop: () => void; onPause: () => void; onResume: () => void;
+  approvals: PendingApproval[]; onApprove: (approvalId: string) => void; onReject: (approvalId: string) => void;
 }) {
   const created = new Date(run.created_at);
   const timeAgo = getTimeAgo(created);
@@ -145,6 +154,12 @@ function RunCard({ run, expanded, onToggle, onRetry, onStop, onPause, onResume }
                 </button>
               </>
             )}
+            {run.status === "awaiting_approval" && (
+              <button onClick={onStop}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs text-white transition-colors">
+                <Square size={12} /> Stop
+              </button>
+            )}
             {run.status === "failed" && (
               <button onClick={onRetry}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 text-xs text-white transition-colors">
@@ -152,6 +167,40 @@ function RunCard({ run, expanded, onToggle, onRetry, onStop, onPause, onResume }
               </button>
             )}
           </div>
+
+          {approvals.length > 0 && (
+            <div>
+              <p className="text-[11px] text-orange-400 mb-1">Pending approval</p>
+              <div className="space-y-2">
+                {approvals.map((approval) => (
+                  <div key={approval.id} className="rounded-lg border border-orange-900/40 bg-orange-950/10 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-orange-200">{approval.tool_name}</p>
+                        <pre className="mt-1 text-[11px] text-orange-100/80 whitespace-pre-wrap break-all">
+                          {JSON.stringify(approval.arguments, null, 2)}
+                        </pre>
+                      </div>
+                      <div className="flex gap-2 shrink-0">
+                        <button
+                          onClick={() => onApprove(approval.id)}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-xs text-white transition-colors"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => onReject(approval.id)}
+                          className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs text-white transition-colors"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Steps */}
           {run.steps.length > 0 && (
@@ -220,6 +269,7 @@ function getTimeAgo(date: Date): string {
 
 export default function RunsPage() {
   const [runs, setRuns] = useState<AgentRun[]>([]);
+  const [approvals, setApprovals] = useState<PendingApproval[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<string>("");
@@ -227,8 +277,12 @@ export default function RunsPage() {
   const loadRuns = useCallback(async () => {
     try {
       const params = filter ? { status: filter } : undefined;
-      const data = await api.runs.list(params);
+      const [data, pendingApprovals] = await Promise.all([
+        api.runs.list(params),
+        api.events.pendingApprovals(),
+      ]);
       setRuns(data.items);
+      setApprovals(pendingApprovals);
     } catch {}
     setLoading(false);
   }, [filter]);
@@ -237,9 +291,9 @@ export default function RunsPage() {
     loadRuns();
   }, [loadRuns]);
 
-  // Auto-refresh if any runs are pending/running
+  // Auto-refresh if any runs are pending/running/awaiting approval
   useEffect(() => {
-    const hasActive = runs.some((r) => r.status === "pending" || r.status === "running");
+    const hasActive = runs.some((r) => r.status === "pending" || r.status === "running" || r.status === "awaiting_approval");
     if (!hasActive) return;
     const timer = setInterval(loadRuns, 2000);
     return () => clearInterval(timer);
@@ -247,7 +301,7 @@ export default function RunsPage() {
 
   const counts = {
     all: runs.length,
-    running: runs.filter((r) => r.status === "running" || r.status === "pending").length,
+    running: runs.filter((r) => r.status === "running" || r.status === "pending" || r.status === "awaiting_approval").length,
     done: runs.filter((r) => r.status === "done").length,
     failed: runs.filter((r) => r.status === "failed").length,
   };
@@ -306,12 +360,15 @@ export default function RunsPage() {
                 <RunCard
                   key={run.id}
                   run={run}
+                  approvals={approvals.filter((approval) => approval.run_id === run.id)}
                   expanded={expandedId === run.id}
                   onToggle={() => setExpandedId(expandedId === run.id ? null : run.id)}
                   onRetry={async () => { await api.runs.retry(run.id); loadRuns(); }}
                   onStop={async () => { await api.runs.stop(run.id); loadRuns(); }}
                   onPause={async () => { await api.runs.pause(run.id); loadRuns(); }}
                   onResume={async () => { await api.runs.resume(run.id); loadRuns(); }}
+                  onApprove={async (approvalId) => { await api.events.approve(approvalId); loadRuns(); }}
+                  onReject={async (approvalId) => { await api.events.reject(approvalId); loadRuns(); }}
                 />
               ))}
             </div>

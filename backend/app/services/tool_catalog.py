@@ -70,6 +70,7 @@ async def get_tool_policy(name: str) -> ToolPolicy | None:
 async def list_tool_policies(
     *,
     include_approval_tools: bool = True,
+    allowed_tool_names: set[str] | None = None,
 ) -> list[ToolPolicy]:
     """Return LLM-visible tools with a single policy source of truth."""
     policies: list[ToolPolicy] = []
@@ -84,6 +85,8 @@ async def list_tool_policies(
             is_builtin=True,
             is_active=True,
         )
+        if allowed_tool_names is not None and policy.name not in allowed_tool_names:
+            continue
         if include_approval_tools or not policy.requires_approval:
             policies.append(policy)
 
@@ -107,14 +110,23 @@ async def list_tool_policies(
             is_builtin=False,
             is_active=tool.is_active,
         )
+        if allowed_tool_names is not None and policy.name not in allowed_tool_names:
+            continue
         if include_approval_tools or not policy.requires_approval:
             policies.append(policy)
 
     return policies
 
 
-async def get_tool_specs(*, include_approval_tools: bool = True) -> list[dict]:
+async def get_tool_specs(
+    *,
+    include_approval_tools: bool = True,
+    allowed_tool_names: set[str] | None = None,
+) -> list[dict]:
     return [
         policy.to_llm_spec()
-        for policy in await list_tool_policies(include_approval_tools=include_approval_tools)
+        for policy in await list_tool_policies(
+            include_approval_tools=include_approval_tools,
+            allowed_tool_names=allowed_tool_names,
+        )
     ]

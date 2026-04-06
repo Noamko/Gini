@@ -61,6 +61,56 @@ async def test_build_llm_history_reconstructs_tool_rounds():
     ]
 
 
+async def test_build_llm_history_drops_dangling_tool_calls_and_keeps_text():
+    history = conversation_service.build_llm_history([
+        Message(role="user", content="send an email"),
+        Message(
+            role="assistant",
+            content="I'll delegate that.",
+            tool_calls=[{"id": "tool-1", "name": "delegate_task", "input": {"agent_name": "Mail"}}],
+        ),
+        Message(role="user", content="try again"),
+    ])
+
+    assert history == [
+        {"role": "user", "content": "send an email"},
+        {"role": "assistant", "content": "I'll delegate that."},
+        {"role": "user", "content": "try again"},
+    ]
+
+
+async def test_build_llm_history_filters_unmatched_tool_calls():
+    history = conversation_service.build_llm_history([
+        Message(
+            role="assistant",
+            content="Running two tools.",
+            tool_calls=[
+                {"id": "tool-1", "name": "search", "input": {"q": "listing"}},
+                {"id": "tool-2", "name": "notify", "input": {"message": "done"}},
+            ],
+        ),
+        Message(role="tool", content='{"items":[1]}', tool_call_id="tool-1"),
+        Message(role="assistant", content="Completed the successful tool."),
+    ])
+
+    assert history == [
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Running two tools."},
+                {"type": "tool_use", "id": "tool-1", "name": "search", "input": {"q": "listing"}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "tool-1", "content": '{"items":[1]}'},
+            ],
+        },
+        {"role": "assistant", "content": "Completed the successful tool."},
+    ]
+
+
 async def test_get_conversation_agent_and_history_uses_main_agent_when_conversation_has_none(db_session):
     agent = Agent(
         name="Main",

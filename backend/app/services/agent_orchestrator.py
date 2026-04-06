@@ -9,6 +9,7 @@ from sqlalchemy import select, update
 from app.dependencies import async_session, redis_client
 from app.event_bus.bus import event_bus
 from app.event_bus.events import EventTypes
+from app.event_bus.hitl import request_approval, wait_for_approval
 from app.models.agent import Agent
 from app.models.agent_run import AgentRun
 from app.services.autonomous_execution import (
@@ -32,6 +33,14 @@ AGENT_STATE_KEY = "gini:agent_states"
 DASHBOARD_CHANNEL = "gini:dashboard"
 
 MAX_DELEGATION_ROUNDS = 100
+RUN_STATUS_AWAITING_APPROVAL = "awaiting_approval"
+
+
+def _failed_terminal_step(steps: list[dict]) -> dict | None:
+    for step in reversed(steps):
+        if step.get("type") == "tool_call":
+            return step if step.get("success") is False else None
+    return None
 
 
 async def set_agent_state(agent_id: str, state: str, metadata: dict | None = None) -> None:
@@ -113,7 +122,7 @@ async def run_sub_agent(
         source=f"agent:{agent.name}",
     )
 
-    resources = await prepare_autonomous_resources(agent)
+    resources = await prepare_autonomous_resources(agent, include_approval_tools=True)
     context = AutonomousContext(messages=[{"role": "user", "content": task}])
 
     try:
@@ -134,29 +143,89 @@ async def run_sub_agent(
                     parent_conversation_id=parent_conversation_id,
                 )
 
+            async def request_tool_approval(tc: dict, _tool_policy) -> tuple[bool, str | None]:
+                pending = await request_approval(
+                    tool_name=tc["name"],
+                    arguments=tc["arguments"],
+                    conversation_id=parent_conversation_id,
+                    run_id=str(run_id),
+                    agent_id=str(agent.id),
+                    source=f"agent:{agent.name}",
+                )
+
+                async with async_session() as db:
+                    r = await db.get(AgentRun, run_id)
+                    if r:
+                        r.status = RUN_STATUS_AWAITING_APPROVAL
+                        r.steps = list(context.steps)
+                        r.input_tokens = context.total_input_tokens
+                        r.output_tokens = context.total_output_tokens
+                        r.cost_usd = context.total_cost_usd
+                        await db.commit()
+
+                await set_agent_state(
+                    str(agent.id),
+                    "awaiting_approval",
+                    {"tool_name": tc["name"], "run_id": str(run_id)},
+                )
+                approved = await wait_for_approval(pending, timeout=300)
+
+                async with async_session() as db:
+                    r = await db.get(AgentRun, run_id)
+                    if r and r.status == RUN_STATUS_AWAITING_APPROVAL:
+                        r.status = "running"
+                        await db.commit()
+
+                await set_agent_state(str(agent.id), STATE_EXECUTING if approved else STATE_THINKING)
+                return approved, pending.reject_reason
+
             round_result = await run_autonomous_round(
                 agent=agent,
                 resources=resources,
                 context=context,
                 round_num=round_num,
                 delegate_task_runner=delegate_task_runner,
+                request_tool_approval=request_tool_approval,
                 on_before_tools=lambda: set_agent_state(str(agent.id), STATE_EXECUTING),
             )
 
             if round_result.done:
                 duration_ms = round((time.perf_counter() - start) * 1000, 2)
+                failed_step = _failed_terminal_step(context.steps)
 
                 # Update run record
                 async with async_session() as db:
                     r = await db.get(AgentRun, run_id)
                     if r:
-                        r.status = "done"
+                        if failed_step:
+                            r.status = "failed"
+                            r.error = str(
+                                failed_step.get("error")
+                                or failed_step.get("output")
+                                or round_result.final_content
+                            )[:2000]
+                        else:
+                            r.status = "done"
+                            r.error = None
                         r.result = round_result.final_content
                         r.input_tokens = context.total_input_tokens
                         r.output_tokens = context.total_output_tokens
                         r.cost_usd = context.total_cost_usd
                         r.duration_ms = duration_ms
                         await db.commit()
+
+                if failed_step:
+                    await set_agent_state(str(agent.id), STATE_ERROR)
+                    return {
+                        "success": False,
+                        "content": round_result.final_content or failed_step.get("error") or "Sub-agent tool failed.",
+                        "agent_name": agent.name,
+                        "model": round_result.response.model,
+                        "input_tokens": context.total_input_tokens,
+                        "output_tokens": context.total_output_tokens,
+                        "cost_usd": context.total_cost_usd,
+                        "duration_ms": duration_ms,
+                    }
 
                 await set_agent_state(str(agent.id), STATE_IDLE)
                 await event_bus.publish(

@@ -7,13 +7,25 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
-from app.models.credential import Credential
+from app.models.credential import Credential, skill_credentials
+from app.models.skill import agent_skills
 from app.schemas.credential import CredentialCreate, CredentialResponse, CredentialUpdate
-from app.services.credential_vault import decrypt_value, encrypt_value
+from app.services.credential_vault import encrypt_value
+from app.services.skill_executor import invalidate_prompt_cache
 
 logger = structlog.get_logger("credentials_api")
 
 router = APIRouter(prefix="/api/credentials", tags=["credentials"])
+
+
+async def _invalidate_credential_prompt_caches(credential_id: UUID, db: AsyncSession) -> None:
+    result = await db.execute(
+        select(agent_skills.c.agent_id)
+        .join(skill_credentials, skill_credentials.c.skill_id == agent_skills.c.skill_id)
+        .where(skill_credentials.c.credential_id == credential_id)
+    )
+    for (agent_id,) in result:
+        await invalidate_prompt_cache(agent_id)
 
 
 @router.get("", response_model=list[CredentialResponse])
@@ -64,20 +76,17 @@ async def update_credential(credential_id: UUID, body: CredentialUpdate, db: Asy
 
     await db.commit()
     await db.refresh(cred)
+    await _invalidate_credential_prompt_caches(credential_id, db)
     return cred
 
 
 @router.get("/{credential_id}/reveal")
 async def reveal_credential(credential_id: UUID, db: AsyncSession = Depends(get_db)):
-    """Return the decrypted credential value."""
+    """Disabled: raw credential reveal is not allowed over the API."""
     cred = await db.get(Credential, credential_id)
     if not cred:
         raise HTTPException(404, "Credential not found")
-    try:
-        value = decrypt_value(cred.encrypted_value)
-    except Exception:
-        raise HTTPException(500, "Failed to decrypt credential") from None
-    return {"value": value}
+    raise HTTPException(403, "Credential reveal is disabled. Update or replace the credential instead.")
 
 
 @router.delete("/{credential_id}", status_code=204)
@@ -85,5 +94,6 @@ async def delete_credential(credential_id: UUID, db: AsyncSession = Depends(get_
     cred = await db.get(Credential, credential_id)
     if not cred:
         raise HTTPException(404, "Credential not found")
+    await _invalidate_credential_prompt_caches(credential_id, db)
     await db.delete(cred)
     await db.commit()

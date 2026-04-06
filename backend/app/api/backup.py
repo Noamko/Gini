@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -26,7 +26,7 @@ logger = structlog.get_logger("backup")
 
 router = APIRouter(prefix="/api/backup", tags=["backup"])
 
-BACKUP_VERSION = "1.1"
+BACKUP_VERSION = "1.2"
 
 
 def _serialize_uuid(val):
@@ -37,7 +37,10 @@ def _serialize_uuid(val):
 
 
 @router.get("/export")
-async def export_backup(db: AsyncSession = Depends(get_db)):
+async def export_backup(
+    include_secrets: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+):
     """Export all config and history data as portable JSON."""
 
     # Agents
@@ -77,16 +80,26 @@ async def export_backup(db: AsyncSession = Depends(get_db)):
         for t in result.scalars().all()
     ]
 
-    # Credentials (encrypted values exported as-is)
+    # Credentials
     result = await db.execute(select(Credential).order_by(Credential.name))
     credentials = [
-        {
-            "name": c.name,
-            "description": c.description,
-            "credential_type": c.credential_type,
-            "encrypted_value": c.encrypted_value,
-            "is_active": c.is_active,
-        }
+        (
+            {
+                "name": c.name,
+                "description": c.description,
+                "credential_type": c.credential_type,
+                "encrypted_value": c.encrypted_value,
+                "is_active": c.is_active,
+            }
+            if include_secrets else
+            {
+                "name": c.name,
+                "description": c.description,
+                "credential_type": c.credential_type,
+                "is_active": c.is_active,
+                "has_secret": bool(c.encrypted_value),
+            }
+        )
         for c in result.scalars().all()
     ]
 
@@ -297,6 +310,7 @@ async def export_backup(db: AsyncSession = Depends(get_db)):
     return {
         "version": BACKUP_VERSION,
         "exported_at": datetime.now(UTC).isoformat(),
+        "includes_secrets": include_secrets,
         # Config
         "agents": agents,
         "tools": tools,
@@ -322,7 +336,7 @@ async def restore_backup(data: dict, db: AsyncSession = Depends(get_db)):
     """Restore config and history from a backup JSON. Upserts by name for config, by ID for history."""
 
     version = data.get("version", "")
-    if version not in (BACKUP_VERSION, "1.0"):
+    if version not in (BACKUP_VERSION, "1.1", "1.0"):
         raise HTTPException(400, f"Unsupported backup version: {version}")
 
     counts = {}
@@ -342,12 +356,20 @@ async def restore_backup(data: dict, db: AsyncSession = Depends(get_db)):
     # 2. Credentials
     for c in data.get("credentials", []):
         existing = (await db.execute(select(Credential).where(Credential.name == c["name"]))).scalar_one_or_none()
+        encrypted_value = c.get("encrypted_value")
         if existing:
             for k, v in c.items():
+                if k in {"name", "has_secret"}:
+                    continue
+                if k == "encrypted_value" and v is None:
+                    continue
                 if k != "name":
                     setattr(existing, k, v)
+        elif encrypted_value:
+            db.add(Credential(**{k: v for k, v in c.items() if k != "has_secret"}))
         else:
-            db.add(Credential(**c))
+            await logger.awarning("backup_restore_skipping_credential_without_secret", credential=c["name"])
+            continue
         counts["credentials"] = counts.get("credentials", 0) + 1
     await db.flush()
 

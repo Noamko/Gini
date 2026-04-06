@@ -49,6 +49,7 @@ class SandboxManager:
         timeout: int = DEFAULT_TIMEOUT,
         mem_limit: str = DEFAULT_MEM_LIMIT,
         allow_network: bool = False,
+        env: dict[str, str] | None = None,
     ) -> SandboxResult:
         """Run a command in an ephemeral sandbox container.
 
@@ -79,6 +80,11 @@ class SandboxManager:
             "--tmpfs", "/tmp:rw,size=128m",
             "--tmpfs", "/workspace:rw,size=64m",
             "--security-opt", "no-new-privileges",
+            *[
+                item
+                for key, value in (env or {}).items()
+                for item in ("-e", f"{key}={value}")
+            ],
             SANDBOX_IMAGE,
             "bash", "-c", command,
         ]
@@ -119,7 +125,7 @@ class SandboxManager:
                 stderr=asyncio.subprocess.DEVNULL,
             )
             await kill_proc.wait()
-            await logger.awarn("sandbox_timeout", container=container_name, timeout=timeout)
+            await logger.awarning("sandbox_timeout", container=container_name, timeout=timeout)
             return SandboxResult(exit_code=137, stdout="", stderr=f"Command timed out after {timeout}s")
 
         except Exception as e:

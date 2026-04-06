@@ -92,6 +92,7 @@ async def chat_websocket(websocket: WebSocket, conversation_id: UUID):
                     messages=history,
                     tool_specs=resources.tool_specs,
                     tool_policy_by_name=resources.tool_policy_by_name,
+                    credentials=resources.credentials,
                     incoming=incoming,
                     persist_message=_persist_message,
                     system_prompt=resources.system_prompt,

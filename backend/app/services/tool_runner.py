@@ -10,10 +10,41 @@ import structlog
 from sqlalchemy import select
 
 from app.sandbox.manager import sandbox_manager
+from app.services.skill_executor import credential_env_var_name
 from app.tools.base import BaseTool, ToolResult
 from app.tools.registry import get_tool
 
 logger = structlog.get_logger("tool_runner")
+
+
+def _normalize_credential_key(name: str) -> str:
+    return name.strip().lower()
+
+
+def _resolve_requested_credentials(
+    requested_names: list[str] | None,
+    available_credentials: dict[str, str] | None,
+) -> tuple[dict[str, str], list[str]]:
+    if not requested_names:
+        return {}, []
+
+    available_credentials = available_credentials or {}
+    lookup = {
+        _normalize_credential_key(name): (name, value)
+        for name, value in available_credentials.items()
+    }
+
+    env_vars: dict[str, str] = {}
+    missing: list[str] = []
+    for requested in requested_names:
+        match = lookup.get(_normalize_credential_key(requested))
+        if not match:
+            missing.append(requested)
+            continue
+        canonical_name, value = match
+        env_vars[credential_env_var_name(canonical_name)] = value
+
+    return env_vars, missing
 
 
 async def _invoke_custom_namespace_executor(namespace: dict, db_tool, arguments: dict) -> ToolResult:
@@ -60,6 +91,7 @@ async def execute_tool(
     arguments: dict,
     use_sandbox: bool = False,
     allow_network: bool = False,
+    credential_values: dict[str, str] | None = None,
 ) -> ToolResult:
     """Look up and execute a tool by name.
 
@@ -72,13 +104,24 @@ async def execute_tool(
     if tool:
         try:
             if use_sandbox and tool.requires_sandbox:
-                result = await _execute_in_sandbox(tool, arguments, allow_network=allow_network)
+                result = await _execute_in_sandbox(
+                    tool,
+                    arguments,
+                    allow_network=allow_network,
+                    credential_values=credential_values,
+                )
             else:
-                result = await tool.execute(**arguments)
+                result = await tool.execute(**arguments, credential_values=credential_values)
         except Exception as e:
             result = ToolResult(success=False, error=f"Tool execution error: {e}")
     else:
-        result = await _execute_custom_tool(tool_name, arguments, use_sandbox, allow_network)
+        result = await _execute_custom_tool(
+            tool_name,
+            arguments,
+            use_sandbox,
+            allow_network,
+            credential_values=credential_values,
+        )
 
     duration_ms = round((time.perf_counter() - start) * 1000, 2)
 
@@ -95,7 +138,11 @@ async def execute_tool(
 
 
 async def _execute_custom_tool(
-    tool_name: str, arguments: dict, use_sandbox: bool, allow_network: bool,
+    tool_name: str,
+    arguments: dict,
+    use_sandbox: bool,
+    allow_network: bool,
+    credential_values: dict[str, str] | None = None,
 ) -> ToolResult:
     """Execute a custom tool by running its Python code from the DB."""
     from app.dependencies import async_session
@@ -114,12 +161,21 @@ async def _execute_custom_tool(
         return ToolResult(success=False, error=f"Tool '{tool_name}' has no code defined")
 
     if use_sandbox and db_tool.requires_sandbox:
-        return await _run_custom_in_sandbox(db_tool, arguments, allow_network)
+        return await _run_custom_in_sandbox(
+            db_tool,
+            arguments,
+            allow_network,
+            credential_values=credential_values,
+        )
     else:
-        return await _run_custom_inprocess(db_tool, arguments)
+        return await _run_custom_inprocess(db_tool, arguments, credential_values=credential_values)
 
 
-async def _run_custom_inprocess(db_tool, arguments: dict) -> ToolResult:
+async def _run_custom_inprocess(
+    db_tool,
+    arguments: dict,
+    credential_values: dict[str, str] | None = None,
+) -> ToolResult:
     """Execute custom tool code in-process with access to app context."""
 
     # First try: import the tool class from its implementation path
@@ -148,6 +204,8 @@ async def _run_custom_inprocess(db_tool, arguments: dict) -> ToolResult:
         "json": json,
         "BaseTool": BaseTool,
         "ToolResult": ToolResult,
+        "CREDENTIALS": dict(credential_values or {}),
+        "get_credential": lambda name, default=None: (credential_values or {}).get(name, default),
     }
 
     try:
@@ -158,14 +216,25 @@ async def _run_custom_inprocess(db_tool, arguments: dict) -> ToolResult:
         return ToolResult(success=False, error=f"Custom tool error: {e}")
 
 
-async def _run_custom_in_sandbox(db_tool, arguments: dict, allow_network: bool) -> ToolResult:
+async def _run_custom_in_sandbox(
+    db_tool,
+    arguments: dict,
+    allow_network: bool,
+    credential_values: dict[str, str] | None = None,
+) -> ToolResult:
     """Execute custom tool code in a sandbox container."""
     code = db_tool.code
     args_json = json.dumps(arguments).replace("'", "'\\''")
     tool_name = db_tool.name.replace("'", "'\\''")
+    credential_names = sorted((credential_values or {}).keys())
+    credential_name_map = {
+        name: credential_env_var_name(name)
+        for name in credential_names
+    }
+    credential_map_json = json.dumps(credential_name_map).replace("'", "'\\''")
 
     wrapper = f"""python3 -c "
-import asyncio, json, sys, types
+import asyncio, json, os, sys, types
 
 class _BaseTool:
     name = ''
@@ -187,6 +256,10 @@ sys.modules['app.tools'] = _tools_module
 sys.modules['app.tools.base'] = _base_module
 globals()['BaseTool'] = _BaseTool
 globals()['ToolResult'] = _ToolResult
+CREDENTIAL_ENV_VARS = json.loads('{credential_map_json}')
+CREDENTIALS = {{name: os.environ.get(env_name, '') for name, env_name in CREDENTIAL_ENV_VARS.items() if os.environ.get(env_name)}}
+def get_credential(name, default=None):
+    return CREDENTIALS.get(name, default)
 
 {code}
 
@@ -241,7 +314,13 @@ except Exception as e:
 "
 """
     sandbox_result = await sandbox_manager.execute(
-        command=wrapper, timeout=60, allow_network=allow_network,
+        command=wrapper,
+        timeout=60,
+        allow_network=allow_network,
+        env={
+            credential_env_var_name(name): value
+            for name, value in (credential_values or {}).items()
+        },
     )
 
     if not sandbox_result.success:
@@ -258,21 +337,41 @@ except Exception as e:
     return ToolResult(output=output[:50000])
 
 
-async def _execute_in_sandbox(tool: BaseTool, arguments: dict, allow_network: bool = False) -> ToolResult:
+async def _execute_in_sandbox(
+    tool: BaseTool,
+    arguments: dict,
+    allow_network: bool = False,
+    credential_values: dict[str, str] | None = None,
+) -> ToolResult:
     """Execute a built-in tool inside the sandbox container."""
     if tool.name == "run_shell":
         command = arguments.get("command", "")
         timeout = arguments.get("timeout", 30)
+        credential_names = arguments.get("credential_names", [])
+        env_vars, missing = _resolve_requested_credentials(credential_names, credential_values)
+        if missing:
+            return ToolResult(
+                success=False,
+                error=f"Requested credentials are unavailable: {', '.join(missing)}",
+            )
 
         sandbox_result = await sandbox_manager.execute(
-            command=command, timeout=timeout, allow_network=allow_network,
+            command=command,
+            timeout=timeout,
+            allow_network=allow_network,
+            env=env_vars,
         )
 
         return ToolResult(
             success=sandbox_result.success,
             output=sandbox_result.output,
             error=f"Exit code: {sandbox_result.exit_code}" if not sandbox_result.success else None,
-            metadata={"command": command, "exit_code": sandbox_result.exit_code, "sandboxed": True},
+            metadata={
+                "command": command,
+                "exit_code": sandbox_result.exit_code,
+                "sandboxed": True,
+                "credential_names": credential_names,
+            },
         )
 
     return await tool.execute(**arguments)

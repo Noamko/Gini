@@ -53,7 +53,7 @@ async def lifespan(app: FastAPI):
         async with async_session() as db:
             result = await db.execute(
                 update(AgentRun)
-                .where(AgentRun.status.in_(["pending", "running"]))
+                .where(AgentRun.status.in_(["pending", "running", "awaiting_approval"]))
                 .values(status="failed", error="Cancelled: backend restarted")
             )
             if result.rowcount:

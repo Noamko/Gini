@@ -1,6 +1,7 @@
 """Tool registry — core built-in tools only. Other tools live in the DB as custom tools."""
 from app.tools.base import BaseTool
 from app.tools.delegate_task import DelegateTaskTool
+from app.tools.email_tools import ReadEmailIMAPTool, SendEmailSMTPTool
 from app.tools.read_file import ReadFileTool
 from app.tools.run_shell import RunShellTool
 from app.tools.web_fetch import WebFetchTool
@@ -11,6 +12,8 @@ BUILTIN_TOOLS: list[BaseTool] = [
     ReadFileTool(),
     WriteFileTool(),
     RunShellTool(),
+    ReadEmailIMAPTool(),
+    SendEmailSMTPTool(),
     WebFetchTool(),
     DelegateTaskTool(),
 ]

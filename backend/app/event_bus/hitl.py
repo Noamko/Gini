@@ -26,7 +26,10 @@ class PendingApproval:
     event_id: str
     tool_name: str
     arguments: dict
-    conversation_id: str
+    conversation_id: str | None
+    run_id: str | None
+    agent_id: str | None
+    source: str
     event: asyncio.Event
     approved: bool | None = None
     reject_reason: str | None = None
@@ -39,7 +42,10 @@ _pending: dict[str, PendingApproval] = {}
 async def request_approval(
     tool_name: str,
     arguments: dict,
-    conversation_id: str,
+    conversation_id: str | None = None,
+    run_id: str | None = None,
+    agent_id: str | None = None,
+    source: str = "hitl",
 ) -> PendingApproval:
     """Create an approval request and return a PendingApproval that can be awaited."""
     approval_id = str(uuid.uuid4())
@@ -50,6 +56,9 @@ async def request_approval(
         tool_name=tool_name,
         arguments=arguments,
         conversation_id=conversation_id,
+        run_id=run_id,
+        agent_id=agent_id,
+        source=source,
         event=asyncio.Event(),
     )
     _pending[approval_id] = pending
@@ -60,7 +69,7 @@ async def request_approval(
         payload={"tool_name": tool_name, "arguments": arguments},
         correlation_id=approval_id,
         conversation_id=conversation_id,
-        source="hitl",
+        source=source,
     )
     pending.event_id = event_id
     await redis_client.setex(
@@ -72,6 +81,9 @@ async def request_approval(
             "tool_name": tool_name,
             "arguments": arguments,
             "conversation_id": conversation_id,
+            "run_id": run_id,
+            "agent_id": agent_id,
+            "source": source,
             "status": "pending",
             "reason": None,
         }),
@@ -107,7 +119,7 @@ async def wait_for_approval(pending: PendingApproval, timeout: float = APPROVAL_
 
             await asyncio.sleep(0.5)
     except TimeoutError:
-        await logger.awarn("approval_timeout", approval_id=pending.id)
+        await logger.awarning("approval_timeout", approval_id=pending.id)
         pending.approved = False
         pending.reject_reason = "Approval timed out"
         await redis_client.setex(
@@ -119,6 +131,9 @@ async def wait_for_approval(pending: PendingApproval, timeout: float = APPROVAL_
                 "tool_name": pending.tool_name,
                 "arguments": pending.arguments,
                 "conversation_id": pending.conversation_id,
+                "run_id": pending.run_id,
+                "agent_id": pending.agent_id,
+                "source": pending.source,
                 "status": "timeout",
                 "reason": pending.reject_reason,
             }),
@@ -135,7 +150,7 @@ async def resolve_approval(approval_id: str, approved: bool, reason: str | None 
     pending = _pending.get(approval_id)
     raw = await redis_client.get(f"{APPROVAL_KEY_PREFIX}{approval_id}")
     if not raw and not pending:
-        await logger.awarn("approval_not_found", approval_id=approval_id)
+        await logger.awarning("approval_not_found", approval_id=approval_id)
         return False
 
     state = json.loads(raw) if raw else {
@@ -144,6 +159,9 @@ async def resolve_approval(approval_id: str, approved: bool, reason: str | None 
         "tool_name": pending.tool_name if pending else "",
         "arguments": pending.arguments if pending else {},
         "conversation_id": pending.conversation_id if pending else "",
+        "run_id": pending.run_id if pending else None,
+        "agent_id": pending.agent_id if pending else None,
+        "source": pending.source if pending else "hitl",
         "status": "pending",
         "reason": None,
     }
@@ -172,7 +190,10 @@ async def resolve_approval(approval_id: str, approved: bool, reason: str | None 
     return True
 
 
-async def get_pending_approvals(conversation_id: str | None = None) -> list[dict]:
+async def get_pending_approvals(
+    conversation_id: str | None = None,
+    run_id: str | None = None,
+) -> list[dict]:
     """List pending approvals, optionally filtered by conversation."""
     approvals = []
     async for key in redis_client.scan_iter(f"{APPROVAL_KEY_PREFIX}*"):
@@ -183,6 +204,8 @@ async def get_pending_approvals(conversation_id: str | None = None) -> list[dict
         if state.get("status") != "pending":
             continue
         if conversation_id and state.get("conversation_id") != conversation_id:
+            continue
+        if run_id and state.get("run_id") != run_id:
             continue
         approvals.append(state)
     return approvals

@@ -34,48 +34,81 @@ async def get_conversation(db: AsyncSession, conversation_id: UUID) -> Conversat
 
 
 def build_llm_history(db_messages: list[Message]) -> list[dict]:
-    """Rebuild structured LLM history from persisted conversation messages."""
+    """Rebuild structured LLM history from persisted conversation messages.
+
+    Incomplete tool rounds are sanitized so a failed or interrupted tool call
+    does not leave invalid history for later retries.
+    """
     messages: list[dict] = []
-    pending_tool_results: list[dict] = []
+    pending_tool_round: dict | None = None
 
-    def flush_tool_results() -> None:
-        if pending_tool_results:
-            messages.append({"role": "user", "content": list(pending_tool_results)})
-            pending_tool_results.clear()
+    def flush_tool_round() -> None:
+        nonlocal pending_tool_round
+        if not pending_tool_round:
+            return
 
-    for message in db_messages:
-        if message.role == "tool":
-            pending_tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": message.tool_call_id or "",
-                "content": message.content or "",
-            })
-            continue
+        matched_tool_results = list(pending_tool_round["tool_results"])
+        matched_tool_ids = {
+            result["tool_use_id"]
+            for result in matched_tool_results
+            if result.get("tool_use_id")
+        }
 
-        flush_tool_results()
-
-        if message.role == "assistant" and message.tool_calls:
+        if matched_tool_results:
             assistant_content = []
-            if message.content:
-                assistant_content.append({"type": "text", "text": message.content})
+            if pending_tool_round["text"]:
+                assistant_content.append({"type": "text", "text": pending_tool_round["text"]})
 
-            raw_tool_calls = message.tool_calls if isinstance(message.tool_calls, list) else [message.tool_calls]
-            for tool_call in raw_tool_calls:
-                if not isinstance(tool_call, dict):
-                    continue
-                assistant_content.append({
-                    "type": "tool_use",
-                    "id": tool_call.get("id", ""),
-                    "name": tool_call.get("name", ""),
-                    "input": tool_call.get("input", {}),
-                })
+            for tool_call in pending_tool_round["tool_calls"]:
+                tool_call_id = tool_call.get("id", "")
+                if tool_call_id and tool_call_id in matched_tool_ids:
+                    assistant_content.append({
+                        "type": "tool_use",
+                        "id": tool_call_id,
+                        "name": tool_call.get("name", ""),
+                        "input": tool_call.get("input", {}),
+                    })
 
             if assistant_content:
                 messages.append({"role": "assistant", "content": assistant_content})
-        elif message.role in ("user", "assistant"):
+            messages.append({"role": "user", "content": matched_tool_results})
+        elif pending_tool_round["text"]:
+            messages.append({"role": "assistant", "content": pending_tool_round["text"]})
+
+        pending_tool_round = None
+
+    for message in db_messages:
+        if message.role == "tool":
+            if pending_tool_round and message.tool_call_id in pending_tool_round["tool_call_ids"]:
+                pending_tool_round["tool_results"].append({
+                    "type": "tool_result",
+                    "tool_use_id": message.tool_call_id or "",
+                    "content": message.content or "",
+                })
+            continue
+
+        flush_tool_round()
+
+        if message.role == "assistant" and message.tool_calls:
+            raw_tool_calls = message.tool_calls if isinstance(message.tool_calls, list) else [message.tool_calls]
+            normalized_tool_calls = [
+                tool_call
+                for tool_call in raw_tool_calls
+                if isinstance(tool_call, dict) and tool_call.get("id")
+            ]
+            if normalized_tool_calls:
+                pending_tool_round = {
+                    "text": message.content or "",
+                    "tool_calls": normalized_tool_calls,
+                    "tool_call_ids": {tool_call["id"] for tool_call in normalized_tool_calls},
+                    "tool_results": [],
+                }
+                continue
+
+        if message.role in ("user", "assistant"):
             messages.append({"role": message.role, "content": message.content or ""})
 
-    flush_tool_results()
+    flush_tool_round()
     return messages
 
 

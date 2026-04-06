@@ -29,14 +29,17 @@ async def list_events(
 
 
 @router.get("/approvals/pending")
-async def list_pending_approvals(conversation_id: str | None = None):
-    pending = await get_pending_approvals(conversation_id)
+async def list_pending_approvals(conversation_id: str | None = None, run_id: str | None = None):
+    pending = await get_pending_approvals(conversation_id=conversation_id, run_id=run_id)
     return [
         {
             "id": p["id"],
             "tool_name": p["tool_name"],
             "arguments": p["arguments"],
             "conversation_id": p["conversation_id"],
+            "run_id": p.get("run_id"),
+            "agent_id": p.get("agent_id"),
+            "source": p.get("source"),
         }
         for p in pending
     ]

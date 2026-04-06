@@ -1,5 +1,7 @@
 """Telegram bot integration — bridges Telegram messages to Gini agent loop."""
 import asyncio
+import contextlib
+import json
 from uuid import UUID
 
 import httpx
@@ -13,6 +15,7 @@ from app.models.agent import Agent
 from app.models.agent_run import AgentRun
 from app.models.conversation import Conversation
 from app.models.message import Message
+from app.event_bus.hitl import get_pending_approvals, resolve_approval
 from app.services import conversation_service
 from app.services.agent_orchestrator import get_agent_by_name, run_sub_agent
 from app.services.autonomous_execution import (
@@ -27,6 +30,7 @@ TELEGRAM_API = "https://api.telegram.org/bot{token}"
 MAX_TOOL_ROUNDS = 100
 CHAT_MAP_PREFIX = "gini:telegram:chat:"
 CHAT_AGENT_PREFIX = "gini:telegram:agent:"
+APPROVAL_CALLBACK_PREFIX = "approval:"
 
 
 class TelegramBot:
@@ -97,6 +101,8 @@ class TelegramBot:
                                 asyncio.create_task(self._handle_voice_message(msg))
                             elif "document" in msg or "photo" in msg:
                                 asyncio.create_task(self._handle_file_message(msg))
+                        elif "callback_query" in update:
+                            asyncio.create_task(self._handle_callback_query(update["callback_query"]))
 
                 except httpx.ReadTimeout:
                     continue
@@ -151,6 +157,61 @@ class TelegramBot:
             # Unknown command — treat as regular message
 
         await self._handle_chat(chat_id, user_name, text)
+
+    async def _handle_callback_query(self, callback_query: dict):
+        chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
+        user_id = callback_query["from"].get("id")
+        if not self._is_allowed(user_id):
+            await self._answer_callback_query(
+                callback_query["id"],
+                "Access denied.",
+                show_alert=True,
+            )
+            return
+
+        data = callback_query.get("data") or ""
+        if not data.startswith(APPROVAL_CALLBACK_PREFIX):
+            await self._answer_callback_query(callback_query["id"], "Unsupported action.")
+            return
+
+        parts = data.split(":", 2)
+        if len(parts) != 3 or parts[1] not in {"approve", "reject"}:
+            await self._answer_callback_query(callback_query["id"], "Unsupported action.")
+            return
+
+        approved = parts[1] == "approve"
+        approval_id = parts[2]
+        ok = await resolve_approval(
+            approval_id,
+            approved=approved,
+            reason=None if approved else "Rejected from Telegram",
+        )
+        if not ok:
+            await self._answer_callback_query(
+                callback_query["id"],
+                "This approval is no longer pending.",
+                show_alert=True,
+            )
+            if chat_id and callback_query.get("message"):
+                await self._edit_message_reply_markup(
+                    chat_id,
+                    callback_query["message"]["message_id"],
+                    None,
+                )
+            return
+
+        await self._answer_callback_query(
+            callback_query["id"],
+            "Approved. The agent will continue." if approved else "Rejected.",
+        )
+        if chat_id and callback_query.get("message"):
+            status_line = "Approved via Telegram." if approved else "Rejected via Telegram."
+            await self._edit_message_reply_markup(
+                chat_id,
+                callback_query["message"]["message_id"],
+                None,
+            )
+            await self._send_message(chat_id, f"🛂 {status_line}")
 
     # ── Commands ────────────────────────────────────────────────────
 
@@ -270,6 +331,7 @@ class TelegramBot:
 
     async def _notify_run_complete(self, chat_id: int, run_id: str, agent_name: str):
         """Poll for run completion and send result to Telegram."""
+        surfaced_approval_ids: set[str] = set()
         for _ in range(120):  # up to 6 minutes
             await asyncio.sleep(3)
             async with async_session() as db:
@@ -288,6 +350,20 @@ class TelegramBot:
                     error = run.error or "Unknown error"
                     await self._send_message(chat_id, f"❌ *{agent_name}* failed:\n{error[:500]}")
                     return
+                elif run.status == "awaiting_approval":
+                    approvals = await get_pending_approvals(run_id=run_id)
+                    if approvals:
+                        for approval in approvals:
+                            if approval["id"] in surfaced_approval_ids:
+                                continue
+                            await self._send_approval_request(
+                                chat_id,
+                                approval,
+                                title=f"Approval required for {agent_name}",
+                            )
+                            surfaced_approval_ids.add(approval["id"])
+                    elif not surfaced_approval_ids:
+                        await self._send_message(chat_id, f"🛂 *{agent_name}* is waiting for approval.")
 
     async def _cmd_runs(self, chat_id: int, user_name: str, arg: str):
         async with async_session() as db:
@@ -303,7 +379,7 @@ class TelegramBot:
             await self._send_message(chat_id, "No runs yet. Start one with /run `<agent>` `<task>`")
             return
 
-        status_icons = {"done": "✅", "failed": "❌", "running": "⏳", "pending": "🕐"}
+        status_icons = {"done": "✅", "failed": "❌", "running": "⏳", "pending": "🕐", "awaiting_approval": "🛂"}
         lines = ["*Recent runs:*\n"]
         for r in runs:
             icon = status_icons.get(r.status, "❓")
@@ -458,13 +534,22 @@ class TelegramBot:
             await self._persist_message(conversation_id, role="user", content=text)
 
             resources = await prepare_autonomous_resources(agent)
-            response_text = await self._run_agent(
+            response_task = asyncio.create_task(self._run_agent(
                 agent,
                 messages,
                 resources,
                 conversation_id=str(conversation_id),
                 conversation_id_obj=conversation_id,
+            ))
+            approval_watcher = asyncio.create_task(
+                self._watch_conversation_approvals(chat_id, conversation_id, response_task)
             )
+            try:
+                response_text = await response_task
+            finally:
+                approval_watcher.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await approval_watcher
 
             await self._persist_message(conversation_id, role="assistant", content=response_text)
             await self._send_long_message(chat_id, response_text)
@@ -597,56 +682,59 @@ class TelegramBot:
                 .limit(limit)
             )
             db_messages = list(reversed(result.scalars().all()))
-            messages = []
-            pending_tool_results: list[dict] = []
-
-            def flush_tool_results() -> None:
-                if pending_tool_results:
-                    messages.append({"role": "user", "content": list(pending_tool_results)})
-                    pending_tool_results.clear()
-
-            for m in db_messages:
-                if m.role == "tool":
-                    pending_tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": m.tool_call_id or "",
-                        "content": m.content or "",
-                    })
-                    continue
-
-                flush_tool_results()
-
-                if m.role == "assistant" and m.tool_calls:
-                    assistant_content = []
-                    if m.content:
-                        assistant_content.append({"type": "text", "text": m.content})
-                    raw_tool_calls = m.tool_calls if isinstance(m.tool_calls, list) else [m.tool_calls]
-                    for tc in raw_tool_calls:
-                        if not isinstance(tc, dict):
-                            continue
-                        assistant_content.append({
-                            "type": "tool_use",
-                            "id": tc.get("id", ""),
-                            "name": tc.get("name", ""),
-                            "input": tc.get("input", {}),
-                        })
-                    if assistant_content:
-                        messages.append({"role": "assistant", "content": assistant_content})
-                elif m.role in ("user", "assistant"):
-                    messages.append({"role": m.role, "content": m.content or ""})
-
-            flush_tool_results()
-            return messages
+            return conversation_service.build_llm_history(db_messages)
 
     async def _persist_message(self, conversation_id: UUID, **kwargs):
         async with async_session() as db:
             await conversation_service.create_message(db, conversation_id=conversation_id, **kwargs)
 
-    async def _send_message(self, chat_id: int, text: str):
+    async def _watch_conversation_approvals(
+        self,
+        chat_id: int,
+        conversation_id: UUID,
+        response_task: asyncio.Task,
+    ) -> None:
+        surfaced_ids: set[str] = set()
+        while not response_task.done():
+            approvals = await get_pending_approvals(conversation_id=str(conversation_id))
+            for approval in approvals:
+                approval_id = approval["id"]
+                if approval_id in surfaced_ids:
+                    continue
+                await self._send_approval_request(chat_id, approval)
+                surfaced_ids.add(approval_id)
+            await asyncio.sleep(1)
+
+    def _approval_markup(self, approval_id: str) -> dict:
+        return {
+            "inline_keyboard": [[
+                {"text": "Approve", "callback_data": f"{APPROVAL_CALLBACK_PREFIX}approve:{approval_id}"},
+                {"text": "Reject", "callback_data": f"{APPROVAL_CALLBACK_PREFIX}reject:{approval_id}"},
+            ]]
+        }
+
+    async def _send_approval_request(self, chat_id: int, approval: dict, title: str = "Approval required"):
+        arguments = json.dumps(approval.get("arguments", {}), indent=2, ensure_ascii=True)
+        text = (
+            f"🛂 *{title}*\n"
+            f"Tool: `{approval.get('tool_name', 'unknown')}`\n"
+            f"Approval ID: `{approval['id']}`\n"
+            f"Arguments:\n```json\n{arguments[:2500]}\n```"
+        )
+        await self._send_message(
+            chat_id,
+            text,
+            reply_markup=self._approval_markup(approval["id"]),
+        )
+
+    async def _send_message(self, chat_id: int, text: str, reply_markup: dict | None = None):
+        payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
         async with httpx.AsyncClient(timeout=10) as client:
             await client.post(
                 f"{self.base_url}/sendMessage",
-                json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
+                json=payload,
             )
 
     async def _send_long_message(self, chat_id: int, text: str):
@@ -676,6 +764,29 @@ class TelegramBot:
                 )
         except Exception:
             pass
+
+    async def _answer_callback_query(self, callback_query_id: str, text: str, show_alert: bool = False):
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(
+                f"{self.base_url}/answerCallbackQuery",
+                json={
+                    "callback_query_id": callback_query_id,
+                    "text": text,
+                    "show_alert": show_alert,
+                },
+            )
+
+    async def _edit_message_reply_markup(
+        self,
+        chat_id: int,
+        message_id: int,
+        reply_markup: dict | None,
+    ):
+        payload = {"chat_id": chat_id, "message_id": message_id}
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(f"{self.base_url}/editMessageReplyMarkup", json=payload)
 
 
 telegram_bot = TelegramBot()

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.dependencies import async_session, get_db, redis_client
+from app.event_bus.hitl import request_approval, wait_for_approval
 from app.models.agent import Agent
 from app.models.agent_run import AgentRun
 from app.schemas.agent_run import AgentRunCreate, AgentRunResponse
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/api/runs", tags=["runs"])
 
 MAX_ROUNDS = 100
 RUN_SIGNAL_PREFIX = "gini:run:signal:"
+RUN_STATUS_AWAITING_APPROVAL = "awaiting_approval"
 
 
 async def _check_run_signal(run_id: str) -> str | None:
@@ -42,6 +44,13 @@ async def _set_run_signal(run_id: str, signal: str | None):
         await redis_client.set(f"{RUN_SIGNAL_PREFIX}{run_id}", signal, ex=3600)
     else:
         await redis_client.delete(f"{RUN_SIGNAL_PREFIX}{run_id}")
+
+
+def _failed_terminal_step(steps: list[dict]) -> dict | None:
+    for step in reversed(steps):
+        if step.get("type") == "tool_call":
+            return step if step.get("success") is False else None
+    return None
 
 
 def _build_runtime_state(
@@ -185,7 +194,7 @@ async def stop_run(run_id: UUID, db: AsyncSession = Depends(get_db)):
     run = await db.get(AgentRun, run_id)
     if not run:
         raise HTTPException(404, "Run not found")
-    if run.status not in ("running", "pending", "paused"):
+    if run.status not in ("running", "pending", "paused", RUN_STATUS_AWAITING_APPROVAL):
         raise HTTPException(400, f"Cannot stop a {run.status} run")
     await _set_run_signal(str(run_id), "stop")
     return {"status": "stopping"}
@@ -260,7 +269,7 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
 
     try:
         instructions = run.instructions or f"You are {agent.name}. Execute your primary function and report the result."
-        resources = await prepare_autonomous_resources(agent)
+        resources = await prepare_autonomous_resources(agent, include_approval_tools=True)
 
         if restoring:
             context = AutonomousContext(
@@ -338,6 +347,52 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
 
             await set_agent_state(agent_id, STATE_THINKING)
 
+            async def request_tool_approval(tc: dict, _tool_policy) -> tuple[bool, str | None]:
+                pending = await request_approval(
+                    tool_name=tc["name"],
+                    arguments=tc["arguments"],
+                    run_id=run_id,
+                    agent_id=agent_id,
+                    source="run",
+                )
+
+                duration_ms = round(base_duration_ms + (time.perf_counter() - start) * 1000, 2)
+                async with async_session() as db:
+                    r = await db.get(AgentRun, UUID(run_id))
+                    if r:
+                        r.status = RUN_STATUS_AWAITING_APPROVAL
+                        r.steps = list(context.steps)
+                        r.input_tokens = context.total_input_tokens
+                        r.output_tokens = context.total_output_tokens
+                        r.cost_usd = context.total_cost_usd
+                        r.runtime_state = _build_runtime_state(
+                            messages=context.messages,
+                            steps=context.steps,
+                            total_input=context.total_input_tokens,
+                            total_output=context.total_output_tokens,
+                            total_cost=context.total_cost_usd,
+                            next_round=round_num,
+                            workspace_path=work_dir,
+                            elapsed_ms=duration_ms,
+                        )
+                        await db.commit()
+
+                await set_agent_state(
+                    agent_id,
+                    "awaiting_approval",
+                    {"tool_name": tc["name"], "run_id": run_id},
+                )
+                approved = await wait_for_approval(pending, timeout=300)
+
+                async with async_session() as db:
+                    r = await db.get(AgentRun, UUID(run_id))
+                    if r and r.status == RUN_STATUS_AWAITING_APPROVAL:
+                        r.status = "running"
+                        await db.commit()
+
+                await set_agent_state(agent_id, STATE_EXECUTING if approved else STATE_THINKING)
+                return approved, pending.reject_reason
+
             async def delegate_task_runner(agent_name: str, task: str) -> dict:
                 from app.services.agent_orchestrator import get_agent_by_name, run_sub_agent
 
@@ -360,6 +415,7 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
                 context=context,
                 round_num=round_num,
                 delegate_task_runner=delegate_task_runner,
+                request_tool_approval=request_tool_approval,
                 on_before_tools=lambda: set_agent_state(agent_id, STATE_EXECUTING),
             )
 
@@ -385,9 +441,19 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
             if round_result.done:
                 # Done
                 duration_ms = round(base_duration_ms + (time.perf_counter() - start) * 1000, 2)
+                failed_step = _failed_terminal_step(context.steps)
                 async with async_session() as db:
                     r = await db.get(AgentRun, UUID(run_id))
-                    r.status = "done"
+                    if failed_step:
+                        r.status = "failed"
+                        r.error = str(
+                            failed_step.get("error")
+                            or failed_step.get("output")
+                            or round_result.final_content
+                        )[:2000]
+                    else:
+                        r.status = "done"
+                        r.error = None
                     r.result = round_result.final_content
                     r.input_tokens = context.total_input_tokens
                     r.output_tokens = context.total_output_tokens
@@ -397,8 +463,19 @@ async def _execute_run(run_id: str, agent_id: str) -> None:
                     r.runtime_state = {}
                     await db.commit()
 
-                await set_agent_state(agent_id, STATE_IDLE)
-                await logger.ainfo("run_completed", run_id=run_id, agent=agent.name, cost=context.total_cost_usd, duration_ms=duration_ms)
+                if failed_step:
+                    await set_agent_state(agent_id, STATE_ERROR)
+                    await logger.awarning(
+                        "run_completed_with_failed_tool",
+                        run_id=run_id,
+                        agent=agent.name,
+                        cost=context.total_cost_usd,
+                        duration_ms=duration_ms,
+                        failed_tool=failed_step.get("tool"),
+                    )
+                else:
+                    await set_agent_state(agent_id, STATE_IDLE)
+                    await logger.ainfo("run_completed", run_id=run_id, agent=agent.name, cost=context.total_cost_usd, duration_ms=duration_ms)
                 return
 
         # Exceeded rounds

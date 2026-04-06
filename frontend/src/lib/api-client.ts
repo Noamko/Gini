@@ -96,6 +96,22 @@ export const api = {
     costs: () => request<any>("/api/dashboard/costs"),
     events: (limit = 20) => request<any[]>(`/api/dashboard/events?limit=${limit}`),
   },
+  events: {
+    pendingApprovals: (params?: { conversation_id?: string; run_id?: string }) => {
+      const sp = new URLSearchParams();
+      if (params?.conversation_id) sp.set("conversation_id", params.conversation_id);
+      if (params?.run_id) sp.set("run_id", params.run_id);
+      const qs = sp.toString();
+      return request<any[]>(`/api/approvals/pending${qs ? `?${qs}` : ""}`);
+    },
+    approve: (approvalId: string) =>
+      request<any>(`/api/approvals/${approvalId}/approve`, { method: "POST" }),
+    reject: (approvalId: string, reason?: string) =>
+      request<any>(`/api/approvals/${approvalId}/reject`, {
+        method: "POST",
+        body: JSON.stringify(reason ? { reason } : {}),
+      }),
+  },
   settings: {
     get: () => request<any>("/api/settings"),
     update: (data: any) =>

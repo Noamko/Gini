@@ -21,11 +21,26 @@ class RunShellTool(BaseTool):
                 "description": "Timeout in seconds. Defaults to 30.",
                 "default": 30,
             },
+            "credential_names": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional credential handles to inject as environment variables. "
+                    "The backend maps each handle to a GINI_CRED_* env var."
+                ),
+                "default": [],
+            },
         },
         "required": ["command"],
     }
 
-    async def execute(self, command: str, timeout: int = 30, **kwargs: Any) -> ToolResult:
+    async def execute(
+        self,
+        command: str,
+        timeout: int = 30,
+        credential_names: list[str] | None = None,
+        **kwargs: Any,
+    ) -> ToolResult:
         try:
             proc = await asyncio.create_subprocess_shell(
                 command,

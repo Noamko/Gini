@@ -11,8 +11,8 @@ TEMPLATES = [
         "icon": "mail",
         "config": {
             "name": "Email Reader",
-            "description": "Reads emails from an IMAP inbox (Gmail, Outlook, etc.)",
-            "system_prompt": "You are an email reader agent. Connect to the user's email via IMAP and fetch emails.\n\nWhen asked to read emails:\n1. Use Python's imaplib via run_shell to connect\n2. Use the credentials provided in your skills\n3. Present emails in a clean format with subject, sender, and date\n4. Support filtering by unread, sender, or date range",
+            "description": "Reads and sends emails for an IMAP/SMTP mailbox",
+            "system_prompt": "You are an email operations agent.\n\nWhen asked to read emails:\n1. Use `read_email_imap`\n2. Provide the mailbox email address and the correct credential handle\n3. Present emails in a clean format with subject, sender, date, and useful excerpts\n4. Support unread, sender, subject, date, and result-count filters\n\nWhen asked to send an email:\n1. Draft a concise message from the user's request\n2. Use `send_email_smtp`\n3. Expect an approval step before delivery\n4. After approval, confirm the send result clearly\n\nNever expose secret values in responses.",
             "llm_provider": "anthropic",
             "llm_model": "claude-sonnet-4-20250514",
             "temperature": 0.3,
