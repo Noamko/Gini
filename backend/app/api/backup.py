@@ -499,10 +499,14 @@ async def restore_backup(data: dict, db: AsyncSession = Depends(get_db)):
             existing.instructions_template = w.get("instructions_template")
             existing.enabled = w.get("enabled", True)
         else:
-            db.add(Webhook(
-                agent_id=aid, name=w["name"], token=w.get("token", Webhook.token.default.arg()),
-                instructions_template=w.get("instructions_template"), enabled=w.get("enabled", True),
-            ))
+            webhook_kwargs = dict(
+                agent_id=aid, name=w["name"],
+                instructions_template=w.get("instructions_template"),
+                enabled=w.get("enabled", True),
+            )
+            if w.get("token"):
+                webhook_kwargs["token"] = w["token"]
+            db.add(Webhook(**webhook_kwargs))
         counts["webhooks"] = counts.get("webhooks", 0) + 1
 
     await db.flush()
