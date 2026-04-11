@@ -18,9 +18,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.drop_table("memories")
-    op.drop_column("agents", "use_memory")
+    pass
 
 
 def downgrade() -> None:
-    op.add_column("agents", sa.Column("use_memory", sa.Boolean(), server_default="false"))
+    pass
