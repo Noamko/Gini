@@ -3,6 +3,7 @@
 Handles built-in tools, custom Python tools, and sandbox execution.
 """
 import asyncio
+import inspect
 import json
 import time
 
@@ -188,8 +189,14 @@ async def _run_custom_inprocess(
                 module = importlib.import_module(module_path)
                 tool_class = getattr(module, class_name)
                 tool_instance = tool_class()
-                result = await tool_instance.execute(**arguments)
-                return result
+                kwargs = dict(arguments)
+                sig = inspect.signature(tool_instance.execute)
+                accepts_creds = "credential_values" in sig.parameters or any(
+                    p.kind is inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+                )
+                if accepts_creds:
+                    kwargs["credential_values"] = credential_values
+                return await tool_instance.execute(**kwargs)
         except Exception as e:
             await logger.adebug("tool_impl_import_fallback", tool=db_tool.name, error=str(e))
 
