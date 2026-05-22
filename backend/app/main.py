@@ -74,11 +74,14 @@ async def lifespan(app: FastAPI):
         from app.tools.registry import BUILTIN_TOOLS
 
         # Tools that should be custom (editable) with their source code
+        from app.tools.rss_fetch import RssFetchTool
         from app.tools.send_telegram import SendTelegramMediaGroupTool, SendTelegramPhotoTool, SendTelegramTool
+        from app.tools.stock_news_scrape import StockNewsScrapeTool
 
         custom_tool_classes = [
             SendTelegramTool(), SendTelegramPhotoTool(), SendTelegramMediaGroupTool(),
             CacheSetTool(), CacheGetTool(), CacheDeleteTool(), CacheListTool(),
+            RssFetchTool(), StockNewsScrapeTool(),
         ]
 
         async with _as() as db:
