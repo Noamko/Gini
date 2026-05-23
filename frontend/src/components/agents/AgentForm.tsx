@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Agent } from "@/lib/types";
 import { api } from "@/lib/api-client";
-import { X, Sparkles, KeyRound, Check } from "lucide-react";
+import { X, Sparkles, KeyRound, Check, Maximize2, Minimize2 } from "lucide-react";
 
 interface Props {
   agent?: Agent | null;
@@ -53,6 +53,7 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
   const [autoApprove, setAutoApprove] = useState(agent?.auto_approve ?? false);
   const [dailyBudget, setDailyBudget] = useState(agent?.daily_budget_usd?.toString() || "");
   const [saving, setSaving] = useState(false);
+  const [promptExpanded, setPromptExpanded] = useState(false);
 
   // Models from API
   const [apiModels, setApiModels] = useState<{ id: string; name: string; provider: string }[]>([]);
@@ -90,6 +91,20 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
       setModel(modelOptions[0].value);
     }
   }, [provider, agent, modelOptions.length]);
+
+  useEffect(() => {
+    if (!promptExpanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPromptExpanded(false);
+    };
+    document.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [promptExpanded]);
 
   const toggleSkill = (skillId: string) => {
     setAssignedSkillIds((prev) => {
@@ -167,7 +182,18 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
         </div>
 
         <div className="space-y-1.5">
-          <label className="text-xs font-medium text-zinc-400">System Prompt</label>
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-zinc-400">System Prompt</label>
+            <button
+              type="button"
+              onClick={() => setPromptExpanded(true)}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+              title="Expand editor"
+            >
+              <Maximize2 size={12} />
+              Expand
+            </button>
+          </div>
           <textarea
             value={systemPrompt}
             onChange={(e) => setSystemPrompt(e.target.value)}
@@ -177,6 +203,41 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
             placeholder="Define the agent's role and behavior..."
           />
         </div>
+
+        {promptExpanded && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 sm:p-8"
+            onClick={() => setPromptExpanded(false)}
+          >
+            <div
+              className="bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
+                <h3 className="text-sm font-semibold text-zinc-200">System Prompt</h3>
+                <div className="flex items-center gap-1">
+                  <span className="text-[11px] text-zinc-500 mr-2">Esc to close</span>
+                  <button
+                    type="button"
+                    onClick={() => setPromptExpanded(false)}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
+                    title="Collapse"
+                  >
+                    <Minimize2 size={12} />
+                    Collapse
+                  </button>
+                </div>
+              </div>
+              <textarea
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                autoFocus
+                className="flex-1 w-full bg-zinc-900 rounded-b-xl px-5 py-4 text-sm font-mono leading-relaxed resize-none focus:outline-none text-zinc-100"
+                placeholder="Define the agent's role and behavior..."
+              />
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-4 gap-4">
           <div className="space-y-1.5">
