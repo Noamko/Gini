@@ -43,13 +43,22 @@ class EventBus:
         channel = f"{CHANNEL_PREFIX}{event_type}"
         await self._redis.publish(channel, json.dumps(event_data))
 
-        # Persist to DB
+        # Persist to DB. conversation_id is a UUID column — if the caller passes
+        # a non-UUID correlation string (e.g. "run:<uuid>" from scheduled runs),
+        # drop it from the DB row; the original value is still in the Redis payload.
+        db_conversation_id: uuid.UUID | None = None
+        if conversation_id:
+            try:
+                db_conversation_id = uuid.UUID(conversation_id)
+            except ValueError:
+                db_conversation_id = None
+
         async with async_session() as db:
             db_event = Event(
                 id=uuid.UUID(event_id),
                 event_type=event_type,
                 correlation_id=correlation_id,
-                conversation_id=uuid.UUID(conversation_id) if conversation_id else None,
+                conversation_id=db_conversation_id,
                 source=source,
                 payload=payload or {},
                 status="created",
