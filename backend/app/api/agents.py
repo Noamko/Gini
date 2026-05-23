@@ -41,6 +41,8 @@ async def create_agent(body: AgentCreate, db: AsyncSession = Depends(get_db)):
         temperature=body.temperature,
         max_tokens=body.max_tokens,
         is_main=body.is_main,
+        auto_approve=body.auto_approve,
+        daily_budget_usd=body.daily_budget_usd,
         metadata_=body.metadata,
     )
     db.add(agent)
