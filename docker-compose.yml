@@ -50,6 +50,9 @@ services:
         condition: service_healthy
       gini-redis:
         condition: service_healthy
+    networks:
+      - default
+      - marketsim
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
@@ -87,6 +90,10 @@ networks:
     # Sandbox network — internet access, no access to internal services
     driver: bridge
     internal: false
+  marketsim:
+    # External: MarketSimulator's docker network so gini-backend can reach marketsim-backend
+    name: marketsimulator_default
+    external: true
 
 volumes:
   pgdata:
