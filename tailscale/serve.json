@@ -1,0 +1,12 @@
+{
+  "TCP": {
+    "443": { "HTTPS": true }
+  },
+  "Web": {
+    "gini.tail3d4a2.ts.net:443": {
+      "Handlers": {
+        "/": { "Proxy": "http://gini-proxy:80" }
+      }
+    }
+  }
+}

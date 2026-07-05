@@ -2,6 +2,7 @@ services:
 
   gini-db:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
     ports:
       - "127.0.0.1:5432:5432"
     environment:
@@ -18,6 +19,7 @@ services:
 
   gini-redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -32,6 +34,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "127.0.0.1:8000:8000"
     environment:
@@ -42,6 +45,7 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_ALLOWED_USERS: ${TELEGRAM_ALLOWED_USERS:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://gini.tail3d4a2.ts.net}
     volumes:
       - ./settings.yaml:/app/settings.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock
@@ -63,6 +67,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    restart: unless-stopped
     ports:
       - "127.0.0.1:3000:3000"
     environment:
@@ -83,6 +88,25 @@ services:
       - gini-frontend
       - gini-backend
 
+  gini-tailscale:
+    image: tailscale/tailscale:stable
+    hostname: gini
+    environment:
+      # Only needed on first start; node identity persists in the tailscale-state volume.
+      # Optional after registration — leave blank in .env to reuse the persisted identity.
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: gini
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "true"
+      TS_ACCEPT_DNS: "false"
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./tailscale/serve.json:/config/serve.json:ro
+    depends_on:
+      - gini-proxy
+    restart: unless-stopped
+
 networks:
   default:
     # Internal network for services
@@ -98,3 +122,4 @@ networks:
 volumes:
   pgdata:
   redisdata:
+  tailscale-state:

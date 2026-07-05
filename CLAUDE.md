@@ -34,6 +34,7 @@ Frontend:
 - Agent loop / orchestration: `backend/app/services/agent_orchestrator.py`, `chat_execution.py`, `autonomous_execution.py`
 - LLM calls: `backend/app/services/llm_gateway.py`
 - Tools registry + execution: `backend/app/tools/` (one file per tool) + `services/tool_runner.py` + `services/tool_catalog.py`
+- Agent-management ("meta") tools: `create_agent`, `list_agents`, `create_workflow`, `create_webhook`, `create_tool` let an agent extend the platform. They're built-in but **opt-in** (`BaseTool.default_catalog=False`): hidden from the default catalog and granted only via the seeded **"Agent Management"** skill (`scripts/seed_meta_skill.py`, assigned to the main agent). Opt-in grants are *additive* in `execution_prep._tool_grants_for_agent` (they don't strip an agent's normal tools), and the catalog is enforced server-side in `chat_execution`/`autonomous_execution` (a tool with no `ToolPolicy` is refused). Create ops require approval; `caller_agent_id` is threaded through `tool_runner.execute_tool` so tools can target "the calling agent". Webhook URLs use `settings.public_base_url` (env `PUBLIC_BASE_URL`).
 - Telegram bot integration: `backend/app/services/telegram_bot.py`
 - Sandboxed shell execution: `backend/app/sandbox/` + `sandbox/Dockerfile`
 - Frontend app router pages: `frontend/src/app/`; shared state in `frontend/src/stores/`
@@ -43,7 +44,7 @@ Frontend:
 - Two historical revisions are intentionally no-op stubs to unblock fresh installs: `a1b2c3d4e5f6_create_memories_table.py` and `c9d0e1f2a3b4_remove_memories.py`. Don't "restore" them — they were broken.
 
 ## Deployment
-This repo deploys to a Raspberry Pi (`gini` Tailscale node, `gini.tail3d4a2.ts.net`). On the Pi the user is not in the `docker` group on login shells, so wrap docker commands as `sg docker -c "..."`. nginx config and TLS certs are wired to that hostname.
+This repo deploys to a Raspberry Pi and is served at `gini.tail3d4a2.ts.net`. Tailscale runs as a sidecar container (`gini-tailscale`) inside this compose — it joins the tailnet as its own node and terminates TLS for that hostname via `tailscale serve`, forwarding plain HTTP to the internal `gini-proxy`. No host-level Tailscale Serve config is required. State (node identity, LE cert) lives in the `tailscale-state` named volume. First start needs `TS_AUTHKEY` in `.env`; subsequent boots reuse the persisted identity. On the Pi the user is not in the `docker` group on login shells, so wrap docker commands as `sg docker -c "..."`.
 
 ## Things to avoid
 - Don't bypass ruff/format checks — CI runs them and `--no-verify` on commits is off-limits unless explicitly asked.
