@@ -39,6 +39,23 @@ def test_unknown_tool_returns_none():
     assert get_tool("nonexistent_tool_xyz") is None
 
 
+def test_default_catalog_default_true():
+    """Ordinary tools are in the default catalog."""
+    assert BaseTool.default_catalog is True
+    assert get_tool("read_file").default_catalog is True
+
+
+def test_meta_tools_are_optin():
+    """Agent-management tools are registered but opt-in (hidden from the default catalog)."""
+    for name in ("create_agent", "list_agents", "create_workflow", "create_webhook", "create_tool"):
+        tool = get_tool(name)
+        assert tool is not None, f"{name} should be registered"
+        assert tool.default_catalog is False, f"{name} should be opt-in"
+    # Create operations require approval; the discovery helper does not.
+    assert get_tool("create_agent").requires_approval is True
+    assert get_tool("list_agents").requires_approval is False
+
+
 def test_llm_tool_specs_format():
     """Tool specs should have the required fields for LLM APIs."""
     specs = get_llm_tool_specs()

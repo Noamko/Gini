@@ -28,6 +28,7 @@ migrate:
 seed:
 	docker compose exec gini-backend uv run python -m scripts.seed_main_agent
 	docker compose exec gini-backend uv run python -m scripts.seed_tools
+	docker compose exec gini-backend uv run python -m scripts.seed_meta_skill
 
 # Build
 build:

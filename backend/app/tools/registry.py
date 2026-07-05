@@ -1,9 +1,16 @@
 """Tool registry — core built-in tools only. Other tools live in the DB as custom tools."""
+
 from app.tools.base import BaseTool
+from app.tools.create_agent import CreateAgentTool
+from app.tools.create_tool import CreateToolTool
+from app.tools.create_webhook import CreateWebhookTool
+from app.tools.create_workflow import CreateWorkflowTool
 from app.tools.delegate_task import DelegateTaskTool
 from app.tools.email_tools import ReadEmailIMAPTool, SendEmailSMTPTool
+from app.tools.list_agents import ListAgentsTool
 from app.tools.read_file import ReadFileTool
 from app.tools.run_shell import RunShellTool
+from app.tools.send_telegram import SendTelegramMediaGroupTool, SendTelegramPhotoTool, SendTelegramTool
 from app.tools.web_fetch import WebFetchTool
 from app.tools.write_file import WriteFileTool
 
@@ -14,8 +21,17 @@ BUILTIN_TOOLS: list[BaseTool] = [
     RunShellTool(),
     ReadEmailIMAPTool(),
     SendEmailSMTPTool(),
+    SendTelegramTool(),
+    SendTelegramPhotoTool(),
+    SendTelegramMediaGroupTool(),
     WebFetchTool(),
     DelegateTaskTool(),
+    # Agent-management ("meta") tools — opt-in via the "Agent Management" skill.
+    CreateAgentTool(),
+    ListAgentsTool(),
+    CreateWorkflowTool(),
+    CreateWebhookTool(),
+    CreateToolTool(),
 ]
 
 _tools_by_name: dict[str, BaseTool] = {t.name: t for t in BUILTIN_TOOLS}
@@ -42,15 +58,18 @@ async def get_all_tool_specs() -> list[dict]:
 
     from app.dependencies import async_session
     from app.models.tool import Tool
+
     async with async_session() as db:
         result = await db.execute(
             select(Tool).where(Tool.is_active == True).where(Tool.is_builtin == False).where(Tool.code.isnot(None))
         )
         for t in result.scalars().all():
-            specs.append({
-                "name": t.name,
-                "description": t.description,
-                "input_schema": t.parameters_schema,
-            })
+            specs.append(
+                {
+                    "name": t.name,
+                    "description": t.description,
+                    "input_schema": t.parameters_schema,
+                }
+            )
 
     return specs

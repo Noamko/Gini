@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.dependencies import get_db
 from app.models.agent import Agent
 from app.models.agent_run import AgentRun
@@ -26,7 +27,7 @@ async def list_webhooks(db: AsyncSession = Depends(get_db)):
         select(Webhook).options(selectinload(Webhook.agent)).order_by(Webhook.created_at.desc())
     )
     webhooks = result.scalars().all()
-    return {"items": [WebhookResponse.from_orm_model(w) for w in webhooks]}
+    return {"items": [WebhookResponse.from_orm_model(w, base_url=settings.public_base_url) for w in webhooks]}
 
 
 @router.get("/{webhook_id}", response_model=WebhookResponse)
@@ -37,7 +38,7 @@ async def get_webhook(webhook_id: UUID, db: AsyncSession = Depends(get_db)):
     webhook = result.scalar_one_or_none()
     if not webhook:
         raise HTTPException(404, "Webhook not found")
-    return WebhookResponse.from_orm_model(webhook)
+    return WebhookResponse.from_orm_model(webhook, base_url=settings.public_base_url)
 
 
 @router.post("", status_code=201)
@@ -55,7 +56,7 @@ async def create_webhook(body: WebhookCreate, db: AsyncSession = Depends(get_db)
     db.add(webhook)
     await db.commit()
     await db.refresh(webhook, ["agent"])
-    return WebhookResponse.from_orm_model(webhook)
+    return WebhookResponse.from_orm_model(webhook, base_url=settings.public_base_url)
 
 
 @router.put("/{webhook_id}")
@@ -76,7 +77,7 @@ async def update_webhook(webhook_id: UUID, body: WebhookUpdate, db: AsyncSession
 
     await db.commit()
     await db.refresh(webhook, ["agent"])
-    return WebhookResponse.from_orm_model(webhook)
+    return WebhookResponse.from_orm_model(webhook, base_url=settings.public_base_url)
 
 
 @router.delete("/{webhook_id}", status_code=204)

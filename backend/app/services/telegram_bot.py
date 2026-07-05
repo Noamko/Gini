@@ -11,11 +11,11 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.dependencies import async_session, redis_client
+from app.event_bus.hitl import get_pending_approvals, request_approval, resolve_approval, wait_for_approval
 from app.models.agent import Agent
 from app.models.agent_run import AgentRun
 from app.models.conversation import Conversation
 from app.models.message import Message
-from app.event_bus.hitl import get_pending_approvals, resolve_approval
 from app.services import conversation_service
 from app.services.agent_orchestrator import get_agent_by_name, run_sub_agent
 from app.services.autonomous_execution import (
@@ -533,7 +533,9 @@ class TelegramBot:
 
             await self._persist_message(conversation_id, role="user", content=text)
 
-            resources = await prepare_autonomous_resources(agent)
+            # Expose approval-gated tools (e.g. create_agent) — Telegram can now prompt for
+            # approval via inline buttons, so include them even when the agent isn't auto-approve.
+            resources = await prepare_autonomous_resources(agent, include_approval_tools=True)
             response_task = asyncio.create_task(self._run_agent(
                 agent,
                 messages,
@@ -614,12 +616,27 @@ class TelegramBot:
                     parent_conversation_id=conversation_id or "unknown",
                 )
 
+            async def request_tool_approval(tc: dict, _tool_policy) -> tuple[bool, str | None]:
+                # Create a pending approval tied to this conversation. The approval watcher
+                # (_watch_conversation_approvals) surfaces it in Telegram with Approve/Reject
+                # buttons; the button callback resolves it and unblocks wait_for_approval.
+                pending = await request_approval(
+                    tool_name=tc["name"],
+                    arguments=tc["arguments"],
+                    conversation_id=conversation_id,
+                    agent_id=str(agent.id),
+                    source="telegram",
+                )
+                approved = await wait_for_approval(pending, timeout=300)
+                return approved, pending.reject_reason
+
             round_result = await run_autonomous_round(
                 agent=agent,
                 resources=resources,
                 context=context,
                 round_num=round_num,
                 delegate_task_runner=delegate_task_runner,
+                request_tool_approval=request_tool_approval,
                 on_tool_round_persist=persist_tool_round,
                 on_tool_result=persist_tool_result,
             )
