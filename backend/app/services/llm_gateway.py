@@ -1,4 +1,5 @@
 """Unified LLM gateway supporting OpenAI and Anthropic with streaming and tool use."""
+
 import asyncio
 import json
 import time
@@ -103,8 +104,10 @@ class LLMGateway:
                 break
             except AnthropicAPIStatusError as e:
                 if e.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
-                    delay = BASE_DELAY * (2 ** attempt)
-                    await logger.awarning("llm_retry", provider="anthropic", attempt=attempt + 1, status=e.status_code, delay=delay)
+                    delay = BASE_DELAY * (2**attempt)
+                    await logger.awarning(
+                        "llm_retry", provider="anthropic", attempt=attempt + 1, status=e.status_code, delay=delay
+                    )
                     last_error = e
                     await asyncio.sleep(delay)
                 else:
@@ -122,11 +125,13 @@ class LLMGateway:
             if block.type == "text":
                 text_parts.append(block.text)
             elif block.type == "tool_use":
-                tool_calls.append({
-                    "id": block.id,
-                    "name": block.name,
-                    "arguments": block.input,
-                })
+                tool_calls.append(
+                    {
+                        "id": block.id,
+                        "name": block.name,
+                        "arguments": block.input,
+                    }
+                )
 
         await logger.ainfo(
             "llm_response",
@@ -163,14 +168,16 @@ class LLMGateway:
                     if block.get("type") == "text":
                         text_parts.append(block["text"])
                     elif block.get("type") == "tool_use":
-                        tool_calls.append({
-                            "id": block["id"],
-                            "type": "function",
-                            "function": {
-                                "name": block["name"],
-                                "arguments": json.dumps(block.get("input", {})),
-                            },
-                        })
+                        tool_calls.append(
+                            {
+                                "id": block["id"],
+                                "type": "function",
+                                "function": {
+                                    "name": block["name"],
+                                    "arguments": json.dumps(block.get("input", {})),
+                                },
+                            }
+                        )
                 openai_msg = {"role": "assistant", "content": "\n".join(text_parts) if text_parts else None}
                 if tool_calls:
                     openai_msg["tool_calls"] = tool_calls
@@ -179,11 +186,13 @@ class LLMGateway:
                 # Anthropic format: tool_result blocks
                 for block in msg["content"]:
                     if block.get("type") == "tool_result":
-                        converted.append({
-                            "role": "tool",
-                            "tool_call_id": block["tool_use_id"],
-                            "content": block.get("content", ""),
-                        })
+                        converted.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": block["tool_use_id"],
+                                "content": block.get("content", ""),
+                            }
+                        )
                     else:
                         converted.append(msg)
                         break
@@ -191,9 +200,7 @@ class LLMGateway:
                 converted.append(msg)
         return converted
 
-    async def _call_openai(
-        self, messages, system_prompt, tools, model, temperature, max_tokens, start
-    ) -> LLMResponse:
+    async def _call_openai(self, messages, system_prompt, tools, model, temperature, max_tokens, start) -> LLMResponse:
         openai_messages = []
         if system_prompt:
             openai_messages.append({"role": "system", "content": system_prompt})
@@ -211,7 +218,10 @@ class LLMGateway:
         }
         if tools:
             kwargs["tools"] = [
-                {"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["input_schema"]}}
+                {
+                    "type": "function",
+                    "function": {"name": t["name"], "description": t["description"], "parameters": t["input_schema"]},
+                }
                 for t in tools
             ]
 
@@ -221,9 +231,17 @@ class LLMGateway:
                 response = await self.openai.chat.completions.create(**kwargs)
                 break
             except OpenAIAPIStatusError as e:
+                # Some OpenAI models (e.g. gpt-5.x) reject any non-default temperature.
+                # Drop the unsupported param and retry with the model's default.
+                if e.status_code == 400 and "temperature" in str(e).lower() and "temperature" in kwargs:
+                    await logger.awarning("openai_temperature_unsupported", model=model)
+                    kwargs.pop("temperature", None)
+                    continue
                 if e.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES:
-                    delay = BASE_DELAY * (2 ** attempt)
-                    await logger.awarning("llm_retry", provider="openai", attempt=attempt + 1, status=e.status_code, delay=delay)
+                    delay = BASE_DELAY * (2**attempt)
+                    await logger.awarning(
+                        "llm_retry", provider="openai", attempt=attempt + 1, status=e.status_code, delay=delay
+                    )
                     last_error = e
                     await asyncio.sleep(delay)
                 else:
@@ -241,11 +259,13 @@ class LLMGateway:
         tool_calls = []
         if choice.message.tool_calls:
             for tc in choice.message.tool_calls:
-                tool_calls.append({
-                    "id": tc.id,
-                    "name": tc.function.name,
-                    "arguments": json.loads(tc.function.arguments),
-                })
+                tool_calls.append(
+                    {
+                        "id": tc.id,
+                        "name": tc.function.name,
+                        "arguments": json.loads(tc.function.arguments),
+                    }
+                )
 
         await logger.ainfo(
             "llm_response",
@@ -316,15 +336,26 @@ class LLMGateway:
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
         cost = calculate_cost(model, input_tokens, output_tokens)
 
-        await logger.ainfo("llm_response", provider="anthropic", model=model,
-                           input_tokens=input_tokens, output_tokens=output_tokens,
-                           cost_usd=float(cost), duration_ms=duration_ms)
+        await logger.ainfo(
+            "llm_response",
+            provider="anthropic",
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=float(cost),
+            duration_ms=duration_ms,
+        )
 
         yield StreamChunk(
             is_final=True,
-            response=LLMResponse(content=full_content, input_tokens=input_tokens,
-                                 output_tokens=output_tokens, model=model,
-                                 cost_usd=float(cost), duration_ms=duration_ms),
+            response=LLMResponse(
+                content=full_content,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                model=model,
+                cost_usd=float(cost),
+                duration_ms=duration_ms,
+            ),
         )
 
     async def _stream_openai(
@@ -340,8 +371,12 @@ class LLMGateway:
         token_kwarg = {"max_completion_tokens": max_tokens} if uses_new_param else {"max_tokens": max_tokens}
 
         stream = await self.openai.chat.completions.create(
-            model=model, messages=openai_messages, temperature=temperature,
-            **token_kwarg, stream=True, stream_options={"include_usage": True},
+            model=model,
+            messages=openai_messages,
+            temperature=temperature,
+            **token_kwarg,
+            stream=True,
+            stream_options={"include_usage": True},
         )
 
         input_tokens = 0
@@ -359,15 +394,26 @@ class LLMGateway:
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
         cost = calculate_cost(model, input_tokens, output_tokens)
 
-        await logger.ainfo("llm_response", provider="openai", model=model,
-                           input_tokens=input_tokens, output_tokens=output_tokens,
-                           cost_usd=float(cost), duration_ms=duration_ms)
+        await logger.ainfo(
+            "llm_response",
+            provider="openai",
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=float(cost),
+            duration_ms=duration_ms,
+        )
 
         yield StreamChunk(
             is_final=True,
-            response=LLMResponse(content=full_content, input_tokens=input_tokens,
-                                 output_tokens=output_tokens, model=model,
-                                 cost_usd=float(cost), duration_ms=duration_ms),
+            response=LLMResponse(
+                content=full_content,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                model=model,
+                cost_usd=float(cost),
+                duration_ms=duration_ms,
+            ),
         )
 
 

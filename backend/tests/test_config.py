@@ -8,7 +8,7 @@ def test_settings_defaults():
     assert s.app_name == "Gini"
     assert s.app_version == "0.1.0"
     assert s.debug is True
-    assert s.default_llm_provider == "anthropic"
+    assert s.default_llm_provider == "openai"
     assert s.default_temperature == 0.7
     assert s.default_max_tokens == 4096
 

@@ -25,6 +25,8 @@ MODEL_PRICING: dict[str, tuple[Decimal, Decimal]] = {
     "claude-3-opus": (Decimal("15.00"), Decimal("75.00")),
     "claude-3-sonnet": (Decimal("3.00"), Decimal("15.00")),
     "claude-3-haiku": (Decimal("0.25"), Decimal("1.25")),
+    # OpenAI — GPT-5.5
+    "gpt-5.5": (Decimal("5.00"), Decimal("30.00")),
     # OpenAI — GPT-5.4
     "gpt-5.4": (Decimal("2.50"), Decimal("15.00")),
     "gpt-5.4-mini": (Decimal("0.75"), Decimal("4.50")),

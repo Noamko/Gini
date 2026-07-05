@@ -26,12 +26,29 @@ class Settings(BaseSettings):
     app_name: str = "Gini"
     app_version: str = "0.1.0"
     debug: bool = True
-    default_llm_provider: str = "anthropic"
-    default_llm_model: str = "claude-sonnet-4-20250514"
+    # Public base URL of this deployment (used to build outward-facing URLs, e.g. webhook triggers).
+    public_base_url: str = "http://localhost:8000"
+    default_llm_provider: str = "openai"
+    default_llm_model: str = "gpt-5.5"
     default_temperature: float = 0.7
     default_max_tokens: int = 4096
 
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+
+# Per-provider fallback model — used when a provider is chosen without an explicit model,
+# so we never end up with a provider/model mismatch (e.g. provider=openai, model=claude-*).
+DEFAULT_MODEL_BY_PROVIDER: dict[str, str] = {
+    "openai": "gpt-5.5",
+    "anthropic": "claude-sonnet-4-20250514",
+}
+
+
+def default_model_for_provider(provider: str | None) -> str:
+    """Return the fallback model id for a provider, defaulting to the global default model."""
+    if not provider:
+        return settings.default_llm_model
+    return DEFAULT_MODEL_BY_PROVIDER.get(provider, settings.default_llm_model)
 
 
 def load_settings() -> Settings:
@@ -52,6 +69,8 @@ def load_settings() -> Settings:
             settings.app_version = app_cfg["version"]
         if "debug" in app_cfg:
             settings.debug = app_cfg["debug"]
+        if app_cfg.get("public_base_url"):
+            settings.public_base_url = app_cfg["public_base_url"]
         if defaults_cfg.get("llm_provider"):
             settings.default_llm_provider = defaults_cfg["llm_provider"]
         if defaults_cfg.get("llm_model"):
