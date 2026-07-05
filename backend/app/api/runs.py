@@ -18,12 +18,12 @@ from app.event_bus.hitl import request_approval, wait_for_approval
 from app.models.agent import Agent
 from app.models.agent_run import AgentRun
 from app.schemas.agent_run import AgentRunCreate, AgentRunResponse
+from app.services.agent_orchestrator import STATE_ERROR, STATE_EXECUTING, STATE_IDLE, STATE_THINKING, set_agent_state
 from app.services.autonomous_execution import (
     AutonomousContext,
     run_autonomous_round,
 )
 from app.services.execution_prep import prepare_autonomous_resources
-from app.services.agent_orchestrator import STATE_ERROR, STATE_EXECUTING, STATE_IDLE, STATE_THINKING, set_agent_state
 
 logger = structlog.get_logger("runs")
 

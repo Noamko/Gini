@@ -36,6 +36,7 @@ Thumbs.db
 # Build artifacts
 *.pyc
 .cache/
+*.tsbuildinfo
 
 # Sandbox temp files
 /tmp/gini-run-*

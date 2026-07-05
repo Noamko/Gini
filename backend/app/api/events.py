@@ -1,5 +1,6 @@
 """Event and HITL approval REST endpoints."""
 from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

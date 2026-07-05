@@ -10,9 +10,9 @@ from dataclasses import dataclass
 
 import structlog
 
+from app.dependencies import redis_client
 from app.event_bus.bus import event_bus
 from app.event_bus.events import EventTypes
-from app.dependencies import redis_client
 
 logger = structlog.get_logger("hitl")
 
