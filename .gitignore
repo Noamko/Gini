@@ -18,6 +18,8 @@ dist/
 # Docker
 pgdata/
 redisdata/
+# Mount artifact: compose creates this empty file inside bind-mounted backend containers
+backend/settings.yaml
 
 # IDE
 .vscode/
