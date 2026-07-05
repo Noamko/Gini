@@ -3,87 +3,122 @@ from typing import Any
 import httpx
 
 from app.config import settings
-from app.tools.base import BaseTool, ToolResult
+from app.tools.base import BaseTool, CredentialSlot, ToolResult
+
+# Slot holding the default Telegram chat(s) to send to when the caller omits a numeric one.
+# It is a ``multi`` slot: bind one or more chat credentials and every message fans out to all of them.
+_TELEGRAM_CHAT_SLOT = CredentialSlot(
+    name="chat_id",
+    type="telegram",
+    required=False,
+    multi=True,
+    description="Default Telegram chat(s) to send to when chat_id is omitted. Binds one or more; broadcasts to all.",
+)
 
 
-def _resolve_chat_id(chat_id: str, credential_values: dict[str, str] | None) -> str | None:
-    """Resolve chat_id: literal if numeric, otherwise look up as a credential name.
+def _resolve_chat_ids(chat_id: str | None, credential_values: dict[str, Any] | None) -> list[str]:
+    """Resolve the target chats: an explicit numeric literal if given, else every bound ``chat_id`` slot."""
+    if chat_id:
+        stripped = str(chat_id).strip()
+        if stripped.lstrip("-").isdigit():
+            return [stripped]
+    bound = (credential_values or {}).get("chat_id")
+    if bound is None:
+        return []
+    values = bound if isinstance(bound, list) else [bound]
+    return [v for v in (str(b).strip() for b in values) if v]
 
-    Credential keys are compared trimmed and case-insensitive so trailing spaces
-    or casing differences between the agent's argument and the stored name do not
-    break resolution.
+
+async def _broadcast(*, token: str, targets: list[str], path: str, payload_for, timeout: float, summary) -> ToolResult:
+    """POST ``path`` once per target with ``payload_for(chat_id)``; aggregate the results.
+
+    Succeeds if at least one chat received the message (so a single bad chat id doesn't drop
+    delivery to the rest); any failures are surfaced in the output and metadata.
     """
-    if not chat_id:
-        return None
-    stripped = chat_id.strip()
-    if stripped.lstrip("-").isdigit():
-        return stripped
-    if credential_values:
-        normalized = {k.strip().lower(): v for k, v in credential_values.items()}
-        value = normalized.get(stripped.lower())
-        if value:
-            return value.strip()
-    return None
+    successes: list[tuple[str, dict]] = []
+    failures: list[tuple[str, str]] = []
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for cid in targets:
+            try:
+                resp = await client.post(f"https://api.telegram.org/bot{token}/{path}", json=payload_for(cid))
+                data = resp.json()
+            except Exception as e:
+                failures.append((cid, str(e)))
+                continue
+            if data.get("ok"):
+                successes.append((cid, data["result"]))
+            else:
+                failures.append((cid, data.get("description", "Unknown error")))
+
+    if not successes:
+        detail = "; ".join(f"{c}: {e}" for c, e in failures) or "no chats targeted"
+        return ToolResult(success=False, error=f"Telegram send failed for all targets ({detail})")
+
+    output = summary(successes)
+    if failures:
+        output += " | failed for " + "; ".join(f"{c}: {e}" for c, e in failures)
+    return ToolResult(
+        output=output,
+        metadata={
+            "chat_ids": [c for c, _ in successes],
+            "failures": {c: e for c, e in failures},
+        },
+    )
 
 
 class SendTelegramTool(BaseTool):
     name = "send_telegram"
-    description = "Send a text message to a Telegram chat. chat_id can be a numeric chat ID or the name of a Telegram credential to resolve."
+    description = "Send a text message to a Telegram chat. Targets the bound chat unless a numeric chat_id is given."
+    credential_slots = [_TELEGRAM_CHAT_SLOT]
     parameters_schema = {
         "type": "object",
         "properties": {
             "chat_id": {
                 "type": "string",
-                "description": "Numeric Telegram chat ID, or the name of a Telegram credential (e.g. 'Noam telegram account').",
+                "description": "Numeric Telegram chat ID. Optional — if omitted, the chat bound to this tool is used.",
             },
             "text": {
                 "type": "string",
                 "description": "The message text to send.",
             },
         },
-        "required": ["chat_id", "text"],
+        "required": ["text"],
     }
 
-    async def execute(self, chat_id: str, text: str, credential_values: dict[str, str] | None = None, **kwargs: Any) -> ToolResult:
+    async def execute(
+        self, text: str, chat_id: str | None = None, credential_values: dict[str, Any] | None = None, **kwargs: Any
+    ) -> ToolResult:
         token = settings.telegram_bot_token
         if not token or token == "your-telegram-bot-token-here":
             return ToolResult(success=False, error="Telegram bot token not configured")
 
-        resolved = _resolve_chat_id(chat_id, credential_values)
-        if not resolved:
-            return ToolResult(success=False, error=f"Could not resolve chat_id '{chat_id}' — not numeric and not a known credential.")
+        targets = _resolve_chat_ids(chat_id, credential_values)
+        if not targets:
+            return ToolResult(
+                success=False,
+                error=f"Could not resolve chat_id '{chat_id}' — not numeric and no chat credential bound.",
+            )
 
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.post(
-                    f"https://api.telegram.org/bot{token}/sendMessage",
-                    json={"chat_id": resolved, "text": text, "parse_mode": "Markdown"},
-                )
-                data = resp.json()
-                if data.get("ok"):
-                    msg_id = data["result"]["message_id"]
-                    return ToolResult(
-                        output=f"Message sent successfully (message_id: {msg_id})",
-                        metadata={"message_id": msg_id, "chat_id": resolved},
-                    )
-                else:
-                    return ToolResult(
-                        success=False,
-                        error=f"Telegram API error: {data.get('description', 'Unknown error')}",
-                    )
-        except Exception as e:
-            return ToolResult(success=False, error=str(e))
+        return await _broadcast(
+            token=token,
+            targets=targets,
+            path="sendMessage",
+            payload_for=lambda cid: {"chat_id": cid, "text": text, "parse_mode": "Markdown"},
+            timeout=10,
+            summary=lambda s: f"Message sent to {len(s)} chat(s) (message_ids: {[r['message_id'] for _, r in s]})",
+        )
 
 
 class SendTelegramPhotoTool(BaseTool):
     name = "send_telegram_photo"
-    description = "Send a photo to a Telegram chat by URL. chat_id can be a numeric chat ID or the name of a Telegram credential to resolve."
+    description = "Send a photo to a Telegram chat by URL. Targets the bound chat unless a numeric chat_id is given."
+    credential_slots = [_TELEGRAM_CHAT_SLOT]
     parameters_schema = {
         "type": "object",
         "properties": {
             "chat_id": {
                 "type": "string",
-                "description": "Numeric Telegram chat ID, or the name of a Telegram credential.",
+                "description": "Numeric Telegram chat ID. Optional — if omitted, the chat bound to this tool is used.",
             },
             "photo_url": {
                 "type": "string",
@@ -94,54 +129,55 @@ class SendTelegramPhotoTool(BaseTool):
                 "description": "Optional caption for the photo.",
             },
         },
-        "required": ["chat_id", "photo_url"],
+        "required": ["photo_url"],
     }
 
-    async def execute(self, chat_id: str, photo_url: str, caption: str = "", credential_values: dict[str, str] | None = None, **kwargs: Any) -> ToolResult:
+    async def execute(
+        self,
+        photo_url: str,
+        caption: str = "",
+        chat_id: str | None = None,
+        credential_values: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ToolResult:
         token = settings.telegram_bot_token
         if not token or token == "your-telegram-bot-token-here":
             return ToolResult(success=False, error="Telegram bot token not configured")
 
-        resolved = _resolve_chat_id(chat_id, credential_values)
-        if not resolved:
-            return ToolResult(success=False, error=f"Could not resolve chat_id '{chat_id}' — not numeric and not a known credential.")
+        targets = _resolve_chat_ids(chat_id, credential_values)
+        if not targets:
+            return ToolResult(
+                success=False,
+                error=f"Could not resolve chat_id '{chat_id}' — not numeric and no chat credential bound.",
+            )
 
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                payload: dict = {"chat_id": resolved, "photo": photo_url}
-                if caption:
-                    payload["caption"] = caption[:1024]
-                    payload["parse_mode"] = "Markdown"
+        def payload_for(cid: str) -> dict:
+            payload: dict = {"chat_id": cid, "photo": photo_url}
+            if caption:
+                payload["caption"] = caption[:1024]
+                payload["parse_mode"] = "Markdown"
+            return payload
 
-                resp = await client.post(
-                    f"https://api.telegram.org/bot{token}/sendPhoto",
-                    json=payload,
-                )
-                data = resp.json()
-                if data.get("ok"):
-                    msg_id = data["result"]["message_id"]
-                    return ToolResult(
-                        output=f"Photo sent successfully (message_id: {msg_id})",
-                        metadata={"message_id": msg_id, "chat_id": resolved},
-                    )
-                else:
-                    return ToolResult(
-                        success=False,
-                        error=f"Telegram API error: {data.get('description', 'Unknown error')}",
-                    )
-        except Exception as e:
-            return ToolResult(success=False, error=str(e))
+        return await _broadcast(
+            token=token,
+            targets=targets,
+            path="sendPhoto",
+            payload_for=payload_for,
+            timeout=15,
+            summary=lambda s: f"Photo sent to {len(s)} chat(s) (message_ids: {[r['message_id'] for _, r in s]})",
+        )
 
 
 class SendTelegramMediaGroupTool(BaseTool):
     name = "send_telegram_media_group"
-    description = "Send multiple photos as an album to a Telegram chat. chat_id can be a numeric chat ID or the name of a Telegram credential to resolve. Max 10 photos per group."
+    description = "Send multiple photos as an album to a Telegram chat. Targets the bound chat unless a numeric chat_id is given. Max 10 photos per group."
+    credential_slots = [_TELEGRAM_CHAT_SLOT]
     parameters_schema = {
         "type": "object",
         "properties": {
             "chat_id": {
                 "type": "string",
-                "description": "Numeric Telegram chat ID, or the name of a Telegram credential.",
+                "description": "Numeric Telegram chat ID. Optional — if omitted, the chat bound to this tool is used.",
             },
             "photo_urls": {
                 "type": "array",
@@ -153,10 +189,17 @@ class SendTelegramMediaGroupTool(BaseTool):
                 "description": "Caption for the first photo in the album.",
             },
         },
-        "required": ["chat_id", "photo_urls"],
+        "required": ["photo_urls"],
     }
 
-    async def execute(self, chat_id: str, photo_urls: list[str], caption: str = "", credential_values: dict[str, str] | None = None, **kwargs: Any) -> ToolResult:
+    async def execute(
+        self,
+        photo_urls: list[str],
+        caption: str = "",
+        chat_id: str | None = None,
+        credential_values: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> ToolResult:
         token = settings.telegram_bot_token
         if not token or token == "your-telegram-bot-token-here":
             return ToolResult(success=False, error="Telegram bot token not configured")
@@ -164,9 +207,12 @@ class SendTelegramMediaGroupTool(BaseTool):
         if not photo_urls:
             return ToolResult(success=False, error="No photo URLs provided")
 
-        resolved = _resolve_chat_id(chat_id, credential_values)
-        if not resolved:
-            return ToolResult(success=False, error=f"Could not resolve chat_id '{chat_id}' — not numeric and not a known credential.")
+        targets = _resolve_chat_ids(chat_id, credential_values)
+        if not targets:
+            return ToolResult(
+                success=False,
+                error=f"Could not resolve chat_id '{chat_id}' — not numeric and no chat credential bound.",
+            )
 
         urls = photo_urls[:10]
         media = []
@@ -177,23 +223,11 @@ class SendTelegramMediaGroupTool(BaseTool):
                 item["parse_mode"] = "Markdown"
             media.append(item)
 
-        try:
-            async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.post(
-                    f"https://api.telegram.org/bot{token}/sendMediaGroup",
-                    json={"chat_id": resolved, "media": media},
-                )
-                data = resp.json()
-                if data.get("ok"):
-                    count = len(data["result"])
-                    return ToolResult(
-                        output=f"Album sent successfully ({count} photos)",
-                        metadata={"chat_id": resolved, "photo_count": count},
-                    )
-                else:
-                    return ToolResult(
-                        success=False,
-                        error=f"Telegram API error: {data.get('description', 'Unknown error')}",
-                    )
-        except Exception as e:
-            return ToolResult(success=False, error=str(e))
+        return await _broadcast(
+            token=token,
+            targets=targets,
+            path="sendMediaGroup",
+            payload_for=lambda cid: {"chat_id": cid, "media": media},
+            timeout=20,
+            summary=lambda s: f"Album ({len(urls)} photos) sent to {len(s)} chat(s)",
+        )
