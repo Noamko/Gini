@@ -1,4 +1,5 @@
 """Email tools for reading inbox messages and sending outbound mail."""
+
 from __future__ import annotations
 
 import email
@@ -10,18 +11,14 @@ from email.message import EmailMessage
 from email.utils import formatdate, parsedate_to_datetime
 from typing import Any
 
-from app.tools.base import BaseTool, ToolResult
+from app.tools.base import BaseTool, CredentialSlot, ToolResult
 
 
-def _require_credential(
-    credential_name: str,
-    credential_values: dict[str, str] | None,
-) -> str:
-    if not credential_name:
-        raise ValueError("credential_name is required")
-    if not credential_values or credential_name not in credential_values:
-        raise ValueError(f"Credential '{credential_name}' is not available")
-    return credential_values[credential_name]
+def _require_slot(slot: str, credential_values: dict[str, str] | None) -> str:
+    value = (credential_values or {}).get(slot)
+    if not value:
+        raise ValueError(f"Credential slot '{slot}' is not bound for this tool")
+    return value
 
 
 def _decode_header_value(value: str | None) -> str:
@@ -73,17 +70,20 @@ def _normalize_recipients(value: str | list[str] | None) -> list[str]:
 
 class ReadEmailIMAPTool(BaseTool):
     name = "read_email_imap"
-    description = "Read messages from an IMAP inbox using a credential handle managed by Gini."
+    description = "Read messages from an IMAP inbox. The mailbox password is supplied via a bound credential."
+    credential_slots = [
+        CredentialSlot(
+            name="password",
+            type="password",
+            description="Mailbox password or app password for IMAP login.",
+        )
+    ]
     parameters_schema = {
         "type": "object",
         "properties": {
             "email_address": {
                 "type": "string",
                 "description": "Mailbox username or email address to authenticate as.",
-            },
-            "credential_name": {
-                "type": "string",
-                "description": "Credential handle containing the mailbox password or app password.",
             },
             "imap_server": {
                 "type": "string",
@@ -133,13 +133,12 @@ class ReadEmailIMAPTool(BaseTool):
                 "default": 800,
             },
         },
-        "required": ["email_address", "credential_name"],
+        "required": ["email_address"],
     }
 
     async def execute(
         self,
         email_address: str,
-        credential_name: str,
         imap_server: str = "imap.gmail.com",
         imap_port: int = 993,
         folder: str = "INBOX",
@@ -154,7 +153,7 @@ class ReadEmailIMAPTool(BaseTool):
         **kwargs: Any,
     ) -> ToolResult:
         try:
-            password = _require_credential(credential_name, credential_values)
+            password = _require_slot("password", credential_values)
             search_terms: list[str] = ["UNSEEN" if unread_only else "ALL"]
             if sender_filter:
                 search_terms.extend(["FROM", f'"{sender_filter}"'])
@@ -178,7 +177,7 @@ class ReadEmailIMAPTool(BaseTool):
                 if not message_ids:
                     return ToolResult(output=f"No matching emails found in {folder}.")
 
-                selected_ids = list(reversed(message_ids[-max(limit, 1):]))
+                selected_ids = list(reversed(message_ids[-max(limit, 1) :]))
                 summaries: list[str] = []
 
                 for index, msg_id in enumerate(selected_ids, start=1):
@@ -224,18 +223,21 @@ class ReadEmailIMAPTool(BaseTool):
 
 class SendEmailSMTPTool(BaseTool):
     name = "send_email_smtp"
-    description = "Send an outbound email using SMTP with a credential handle managed by Gini."
+    description = "Send an outbound email using SMTP. The mailbox password is supplied via a bound credential."
     requires_approval = True
+    credential_slots = [
+        CredentialSlot(
+            name="password",
+            type="password",
+            description="Mailbox password or app password for SMTP login.",
+        )
+    ]
     parameters_schema = {
         "type": "object",
         "properties": {
             "email_address": {
                 "type": "string",
                 "description": "Mailbox username or sender email address.",
-            },
-            "credential_name": {
-                "type": "string",
-                "description": "Credential handle containing the mailbox password or app password.",
             },
             "to": {
                 "anyOf": [
@@ -283,13 +285,12 @@ class SendEmailSMTPTool(BaseTool):
                 "default": 465,
             },
         },
-        "required": ["email_address", "credential_name", "to", "subject", "body"],
+        "required": ["email_address", "to", "subject", "body"],
     }
 
     async def execute(
         self,
         email_address: str,
-        credential_name: str,
         to: str | list[str],
         subject: str,
         body: str,
@@ -302,7 +303,7 @@ class SendEmailSMTPTool(BaseTool):
         **kwargs: Any,
     ) -> ToolResult:
         try:
-            password = _require_credential(credential_name, credential_values)
+            password = _require_slot("password", credential_values)
             to_list = _normalize_recipients(to)
             cc_list = _normalize_recipients(cc)
             bcc_list = _normalize_recipients(bcc)

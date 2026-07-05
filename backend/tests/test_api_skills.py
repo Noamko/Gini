@@ -46,9 +46,24 @@ async def test_skill_lifecycle(client):
         assert resp.status_code == 200
         assert any(s["name"] == "test-skill" for s in resp.json())
 
+        # Reverse view: list agents for the skill
+        resp = await client.get(f"/api/skills/{skill_id}/agents")
+        assert resp.status_code == 200
+        assert any(a["id"] == agent_id for a in resp.json())
+
+        # Re-assigning is idempotent (no error, no duplicate)
+        resp = await client.post(f"/api/skills/{skill_id}/assign/{agent_id}")
+        assert resp.status_code == 200
+        resp = await client.get(f"/api/skills/{skill_id}/agents")
+        assert [a["id"] for a in resp.json()].count(agent_id) == 1
+
         # Unassign
         resp = await client.delete(f"/api/skills/{skill_id}/assign/{agent_id}")
         assert resp.status_code == 200
+
+        # No longer listed for the skill
+        resp = await client.get(f"/api/skills/{skill_id}/agents")
+        assert all(a["id"] != agent_id for a in resp.json())
 
     finally:
         await client.delete(f"/api/skills/{skill_id}")

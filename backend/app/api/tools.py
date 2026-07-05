@@ -16,9 +16,7 @@ async def list_tools(offset: int = 0, limit: int = 50, db: AsyncSession = Depend
     count_result = await db.execute(select(func.count(Tool.id)))
     total = count_result.scalar_one()
 
-    result = await db.execute(
-        select(Tool).order_by(Tool.is_builtin.desc(), Tool.name).offset(offset).limit(limit)
-    )
+    result = await db.execute(select(Tool).order_by(Tool.is_builtin.desc(), Tool.name).offset(offset).limit(limit))
     tools = result.scalars().all()
     return {
         "items": [ToolResponse.model_validate(t) for t in tools],
@@ -26,6 +24,50 @@ async def list_tools(offset: int = 0, limit: int = 50, db: AsyncSession = Depend
         "offset": offset,
         "limit": limit,
     }
+
+
+@router.get("/catalog")
+async def tool_catalog(db: AsyncSession = Depends(get_db)):
+    """List all grantable tools (built-in + active custom) with their declared credential slots."""
+    from app.tools.registry import get_all_tools
+
+    items: list[dict] = []
+    for tool in get_all_tools():
+        items.append(
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "requires_approval": tool.requires_approval,
+                "requires_sandbox": tool.requires_sandbox,
+                "default_catalog": getattr(tool, "default_catalog", True),
+                "open_credential_slots": getattr(tool, "open_credential_slots", False),
+                "is_builtin": True,
+                "credential_slots": [s.to_dict() for s in (getattr(tool, "credential_slots", None) or [])],
+            }
+        )
+
+    result = await db.execute(
+        select(Tool)
+        .where(Tool.is_active == True)
+        .where(Tool.is_builtin == False)
+        .where(Tool.code.isnot(None))
+        .order_by(Tool.name)
+    )
+    for tool in result.scalars().all():
+        items.append(
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "requires_approval": tool.requires_approval,
+                "requires_sandbox": tool.requires_sandbox,
+                "default_catalog": True,
+                "open_credential_slots": False,
+                "is_builtin": False,
+                "credential_slots": tool.credential_slots or [],
+            }
+        )
+
+    return {"items": items}
 
 
 @router.get("/{tool_id}")
@@ -52,6 +94,7 @@ async def get_tool_source(tool_id: UUID, db: AsyncSession = Depends(get_db)):
             import inspect
 
             from app.tools.registry import get_tool as get_builtin
+
             builtin = get_builtin(tool.name)
             if builtin:
                 source = inspect.getsource(type(builtin))
@@ -71,6 +114,7 @@ async def create_tool(body: ToolCreate, db: AsyncSession = Depends(get_db)):
         parameters_schema=body.parameters_schema,
         implementation="custom",
         code=body.code,
+        credential_slots=body.credential_slots,
         requires_sandbox=body.requires_sandbox,
         requires_approval=body.requires_approval,
         is_builtin=False,

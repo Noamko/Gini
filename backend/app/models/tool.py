@@ -17,3 +17,5 @@ class Tool(Base, UUIDMixin, TimestampMixin):
     is_builtin: Mapped[bool] = mapped_column(Boolean, default=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Declared credential slots for custom tools: list of {name, type, required, description}.
+    credential_slots: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")

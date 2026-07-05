@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import type { Agent } from "@/lib/types";
 import { api } from "@/lib/api-client";
-import { X, Sparkles, KeyRound, Check, Maximize2, Minimize2 } from "lucide-react";
+import { X, Sparkles, Check, Maximize2, Minimize2 } from "lucide-react";
+import { AgentGrants, type ToolGrant } from "./AgentGrants";
 
 interface Props {
   agent?: Agent | null;
@@ -18,15 +19,9 @@ interface SkillOption {
   description: string | null;
 }
 
-interface CredentialOption {
-  id: string;
-  name: string;
-  credential_type: string;
-}
-
 const PROVIDERS = [
-  { value: "anthropic", label: "Anthropic" },
   { value: "openai", label: "OpenAI" },
+  { value: "anthropic", label: "Anthropic" },
 ];
 
 const FALLBACK_MODELS: Record<string, { value: string; label: string }[]> = {
@@ -36,7 +31,7 @@ const FALLBACK_MODELS: Record<string, { value: string; label: string }[]> = {
     { value: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
   ],
   openai: [
-    { value: "gpt-5.4-pro", label: "GPT-5.4 Pro" },
+    { value: "gpt-5.5", label: "GPT-5.5" },
     { value: "gpt-5.4", label: "GPT-5.4" },
     { value: "gpt-4o", label: "GPT-4o" },
   ],
@@ -46,8 +41,8 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
   const [name, setName] = useState(agent?.name || "");
   const [description, setDescription] = useState(agent?.description || "");
   const [systemPrompt, setSystemPrompt] = useState(agent?.system_prompt || "");
-  const [provider, setProvider] = useState(agent?.llm_provider || "anthropic");
-  const [model, setModel] = useState(agent?.llm_model || "claude-sonnet-4-20250514");
+  const [provider, setProvider] = useState(agent?.llm_provider || "openai");
+  const [model, setModel] = useState(agent?.llm_model || "gpt-5.5");
   const [temperature, setTemperature] = useState(agent?.temperature ?? 0.7);
   const [maxTokens, setMaxTokens] = useState(agent?.max_tokens ?? 4096);
   const [autoApprove, setAutoApprove] = useState(agent?.auto_approve ?? false);
@@ -60,9 +55,10 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
 
   // Skills & credentials
   const [allSkills, setAllSkills] = useState<SkillOption[]>([]);
-  const [allCredentials, setAllCredentials] = useState<CredentialOption[]>([]);
   const [assignedSkillIds, setAssignedSkillIds] = useState<Set<string>>(new Set());
   const [initialSkillIds, setInitialSkillIds] = useState<Set<string>>(new Set());
+  const [toolGrants, setToolGrants] = useState<ToolGrant[]>([]);
+  const [credentialIds, setCredentialIds] = useState<string[]>([]);
 
   const isEditing = !!agent;
 
@@ -70,13 +66,23 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
   useEffect(() => {
     api.models.list().then((data) => setApiModels(data.models)).catch(() => {});
     api.skills.list().then((data) => setAllSkills(data)).catch(() => {});
-    api.credentials.list().then((data) => setAllCredentials(data)).catch(() => {});
 
     if (agent) {
       api.agents.skills(agent.id).then((skills) => {
         const ids = new Set(skills.map((s: any) => s.id));
         setAssignedSkillIds(ids);
         setInitialSkillIds(new Set(ids));
+      }).catch(() => {});
+      api.agents.tools(agent.id).then((grants) => {
+        setToolGrants(
+          (grants as ToolGrant[]).map((g) => ({
+            tool_name: g.tool_name,
+            slot_bindings: g.slot_bindings || {},
+          })),
+        );
+      }).catch(() => {});
+      api.agents.credentials(agent.id).then((creds) => {
+        setCredentialIds((creds as { id: string }[]).map((c) => c.id));
       }).catch(() => {});
     }
   }, [agent]);
@@ -132,6 +138,8 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
         max_tokens: maxTokens,
         auto_approve: autoApprove,
         daily_budget_usd: dailyBudget ? parseFloat(dailyBudget) : null,
+        tool_grants: toolGrants,
+        credential_ids: credentialIds,
       } as Partial<Agent>);
 
       // Sync skill assignments if editing
@@ -356,24 +364,16 @@ export function AgentForm({ agent, onSave, onCancel, onDone }: Props) {
           </div>
         )}
 
-        {/* Credentials (read-only, inherited from skills) */}
-        {isEditing && allCredentials.length > 0 && (
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-zinc-400">Credentials (via skills)</label>
-            <div className="flex flex-wrap gap-2">
-              {allCredentials.map((cred) => (
-                <span
-                  key={cred.id}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-zinc-800 border border-zinc-700 text-[11px] text-zinc-400"
-                >
-                  <KeyRound size={10} />
-                  {cred.name}
-                  <span className="text-zinc-600">({cred.credential_type})</span>
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Tools & credentials (direct grants) */}
+        <div className="space-y-2">
+          <label className="text-xs font-medium text-zinc-400">Tools &amp; Credentials</label>
+          <AgentGrants
+            toolGrants={toolGrants}
+            setToolGrants={setToolGrants}
+            credentialIds={credentialIds}
+            setCredentialIds={setCredentialIds}
+          />
+        </div>
 
         <div className="flex justify-end gap-2 pt-2">
           <button

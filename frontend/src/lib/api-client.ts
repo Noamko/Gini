@@ -37,6 +37,8 @@ export const api = {
     delete: (id: string) =>
       request<void>(`/api/agents/${id}`, { method: "DELETE" }),
     skills: (id: string) => request<any[]>(`/api/agents/${id}/skills`),
+    tools: (id: string) => request<any[]>(`/api/agents/${id}/tools`),
+    credentials: (id: string) => request<any[]>(`/api/agents/${id}/credentials`),
   },
   skills: {
     list: () => request<any[]>("/api/skills"),
@@ -47,6 +49,7 @@ export const api = {
       request<any>(`/api/skills/${id}`, { method: "PUT", body: JSON.stringify(data) }),
     delete: (id: string) =>
       request<void>(`/api/skills/${id}`, { method: "DELETE" }),
+    agents: (skillId: string) => request<any[]>(`/api/skills/${skillId}/agents`),
     assign: (skillId: string, agentId: string) =>
       request<any>(`/api/skills/${skillId}/assign/${agentId}`, { method: "POST" }),
     unassign: (skillId: string, agentId: string) =>
@@ -66,6 +69,10 @@ export const api = {
   tools: {
     list: async () => {
       const data = await request<{ items: any[] }>("/api/tools");
+      return data.items;
+    },
+    catalog: async () => {
+      const data = await request<{ items: any[] }>("/api/tools/catalog");
       return data.items;
     },
     get: (id: string) => request<any>(`/api/tools/${id}`),

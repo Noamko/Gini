@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import get_db
+from app.models.agent import Agent
 from app.models.credential import Credential
 from app.models.skill import Skill, agent_skills
 from app.models.tool import Tool
@@ -107,14 +108,36 @@ async def delete_skill(skill_id: UUID, db: AsyncSession = Depends(get_db)):
     await db.commit()
 
 
+@router.get("/{skill_id}/agents")
+async def list_skill_agents(skill_id: UUID, db: AsyncSession = Depends(get_db)):
+    """List the agents this skill is assigned to."""
+    skill = await db.get(Skill, skill_id)
+    if not skill:
+        raise HTTPException(404, "Skill not found")
+    result = await db.execute(
+        select(Agent)
+        .join(agent_skills, Agent.id == agent_skills.c.agent_id)
+        .where(agent_skills.c.skill_id == skill_id)
+        .order_by(Agent.is_main.desc(), Agent.name)
+    )
+    return [
+        {"id": str(a.id), "name": a.name, "is_main": a.is_main, "is_active": a.is_active}
+        for a in result.scalars().all()
+    ]
+
+
 @router.post("/{skill_id}/assign/{agent_id}", status_code=200)
 async def assign_skill_to_agent(skill_id: UUID, agent_id: UUID, db: AsyncSession = Depends(get_db)):
-    """Assign a skill to an agent."""
-    await db.execute(
-        agent_skills.insert().values(agent_id=agent_id, skill_id=skill_id)
+    """Assign a skill to an agent (idempotent)."""
+    existing = await db.execute(
+        select(agent_skills.c.agent_id).where(
+            (agent_skills.c.agent_id == agent_id) & (agent_skills.c.skill_id == skill_id)
+        )
     )
-    await db.commit()
-    await invalidate_prompt_cache(agent_id)
+    if existing.first() is None:
+        await db.execute(agent_skills.insert().values(agent_id=agent_id, skill_id=skill_id))
+        await db.commit()
+        await invalidate_prompt_cache(agent_id)
     return {"status": "assigned"}
 
 

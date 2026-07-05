@@ -9,6 +9,8 @@ class RunShellTool(BaseTool):
     description = "Execute a shell command and return stdout/stderr. Use with caution."
     requires_sandbox = True
     requires_approval = True
+    # Open slots: every credential bound on this tool's grant is exposed as a GINI_CRED_* env var.
+    open_credential_slots = True
     parameters_schema = {
         "type": "object",
         "properties": {
@@ -21,15 +23,6 @@ class RunShellTool(BaseTool):
                 "description": "Timeout in seconds. Defaults to 30.",
                 "default": 30,
             },
-            "credential_names": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": (
-                    "Optional credential handles to inject as environment variables. "
-                    "The backend maps each handle to a GINI_CRED_* env var."
-                ),
-                "default": [],
-            },
         },
         "required": ["command"],
     }
@@ -38,7 +31,6 @@ class RunShellTool(BaseTool):
         self,
         command: str,
         timeout: int = 30,
-        credential_names: list[str] | None = None,
         **kwargs: Any,
     ) -> ToolResult:
         try:

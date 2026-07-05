@@ -3,16 +3,17 @@
 This module centralizes the non-interactive LLM/tool loop used by background
 runs, delegated sub-agents, and Telegram chat handling.
 """
+
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 
 from app.models.agent import Agent
 from app.services.execution_prep import ExecutionResources
+from app.services.grant_resolver import resolve_tool_credentials
 from app.services.llm_gateway import LLMResponse, llm_gateway
 from app.services.tool_catalog import ToolPolicy
 from app.services.tool_runner import execute_tool
-
 
 ToolRoundPersistHook = Callable[[str | None, list[dict]], Awaitable[None]]
 ToolResultHook = Callable[[str, dict, str, bool, str | None], Awaitable[None]]
@@ -51,12 +52,14 @@ def build_assistant_tool_content(response: LLMResponse) -> list[dict]:
     if response.content:
         assistant_content.append({"type": "text", "text": response.content})
     for tc in response.tool_calls:
-        assistant_content.append({
-            "type": "tool_use",
-            "id": tc["id"],
-            "name": tc["name"],
-            "input": tc["arguments"],
-        })
+        assistant_content.append(
+            {
+                "type": "tool_use",
+                "id": tc["id"],
+                "name": tc["name"],
+                "input": tc["arguments"],
+            }
+        )
     return assistant_content
 
 
@@ -85,19 +88,23 @@ async def process_tool_response(
         execution = await tool_handler(tc, tool_policy)
 
         context.total_cost_usd += execution.extra_cost_usd
-        tool_results_content.append({
-            "type": "tool_result",
-            "tool_use_id": tc["id"],
-            "content": execution.output[:10000],
-        })
-        context.steps.append({
-            "type": "tool_call",
-            "tool": tool_name,
-            "arguments": tc["arguments"],
-            "success": execution.success,
-            "output": execution.output[:2000],
-            "error": execution.error,
-        })
+        tool_results_content.append(
+            {
+                "type": "tool_result",
+                "tool_use_id": tc["id"],
+                "content": execution.output[:10000],
+            }
+        )
+        context.steps.append(
+            {
+                "type": "tool_call",
+                "tool": tool_name,
+                "arguments": tc["arguments"],
+                "success": execution.success,
+                "output": execution.output[:2000],
+                "error": execution.error,
+            }
+        )
         if on_tool_result:
             await on_tool_result(tool_name, tc, execution.output[:10000], execution.success, execution.error)
 
@@ -130,13 +137,15 @@ async def run_autonomous_round(
     context.total_output_tokens += response.output_tokens
     context.total_cost_usd += response.cost_usd
 
-    context.steps.append({
-        "type": "llm_call",
-        "round": round_num,
-        "content": (response.content or "")[:1000],
-        "tool_calls": len(response.tool_calls) if response.tool_calls else 0,
-        "tokens": response.input_tokens + response.output_tokens,
-    })
+    context.steps.append(
+        {
+            "type": "llm_call",
+            "round": round_num,
+            "content": (response.content or "")[:1000],
+            "tool_calls": len(response.tool_calls) if response.tool_calls else 0,
+            "tokens": response.input_tokens + response.output_tokens,
+        }
+    )
 
     if not response.tool_calls:
         return AutonomousRoundResult(done=True, response=response, final_content=response.content)
@@ -144,6 +153,14 @@ async def run_autonomous_round(
     async def autonomous_tool_handler(tc: dict, tool_policy: ToolPolicy | None) -> ToolExecutionResult:
         tool_name = tc["name"]
         tool_args = tc["arguments"]
+        # Enforce the catalog server-side: a tool the agent was not granted has no policy and must
+        # not run (hiding it from the LLM specs is not enough, and a None policy bypasses approval).
+        if tool_policy is None and tool_name != "delegate_task":
+            return ToolExecutionResult(
+                output=f"Error: Tool '{tool_name}' is not available to this agent.",
+                success=False,
+                error="Tool not permitted",
+            )
         approved_via_hitl = False
         if tool_policy and tool_policy.requires_approval and not agent.auto_approve:
             if not request_tool_approval:
@@ -180,12 +197,29 @@ async def run_autonomous_round(
                 error=tool_error,
                 extra_cost_usd=delegation_result.get("cost_usd", 0.0),
             )
+        # Scope credentials to this tool's declared slots only — never hand it the whole pool.
+        slot_credentials, missing = resolve_tool_credentials(
+            declared_slots=tool_policy.credential_slots if tool_policy else (),
+            open_credential_slots=tool_policy.open_credential_slots if tool_policy else False,
+            slot_bindings=resources.tool_slot_bindings.get(tool_name, {}),
+            credential_pool=resources.credential_pool,
+        )
+        if missing:
+            return ToolExecutionResult(
+                output=(
+                    f"Error: Tool '{tool_name}' is missing required credential(s): "
+                    f"{', '.join(missing)}. Bind them on the agent's tool grant."
+                ),
+                success=False,
+                error=f"Unbound credential slots: {', '.join(missing)}",
+            )
         result = await execute_tool(
             tool_name,
             tool_args,
             use_sandbox=tool_policy.requires_sandbox if tool_policy else True,
             allow_network=agent.auto_approve or approved_via_hitl,
-            credential_values=resources.credentials,
+            credential_values=slot_credentials,
+            caller_agent_id=str(agent.id),
         )
         return ToolExecutionResult(
             output=result.output if result.success else f"Error: {result.error}",

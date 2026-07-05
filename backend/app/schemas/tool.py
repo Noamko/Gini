@@ -10,6 +10,7 @@ class ToolCreate(BaseModel):
     code: str
     requires_sandbox: bool = False
     requires_approval: bool = False
+    credential_slots: list[dict] = []
 
 
 class ToolUpdate(BaseModel):
@@ -20,6 +21,7 @@ class ToolUpdate(BaseModel):
     requires_approval: bool | None = None
     requires_sandbox: bool | None = None
     is_active: bool | None = None
+    credential_slots: list[dict] | None = None
 
 
 class ToolResponse(IDTimestampMixin):
@@ -32,5 +34,6 @@ class ToolResponse(IDTimestampMixin):
     is_builtin: bool
     is_active: bool
     code: str | None = None
+    credential_slots: list = []
 
     model_config = {"from_attributes": True}

@@ -1,4 +1,5 @@
 """Interactive chat execution helpers."""
+
 import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -22,6 +23,7 @@ from app.services.autonomous_execution import (
     ToolExecutionResult,
     process_tool_response,
 )
+from app.services.grant_resolver import PooledCredential, resolve_tool_credentials
 from app.services.llm_gateway import LLMResponse, llm_gateway
 from app.services.tool_catalog import ToolPolicy
 from app.services.tool_runner import execute_tool
@@ -40,7 +42,8 @@ class InteractiveToolExecutor:
         websocket: WebSocket,
         conversation_id: UUID,
         agent: Agent,
-        credentials: dict[str, str],
+        tool_slot_bindings: dict[str, dict[str, str | list[str]]],
+        credential_pool: dict[str, PooledCredential],
         incoming: asyncio.Queue,
         trace: TraceBuilder,
         persist_message: PersistMessageHook,
@@ -48,7 +51,8 @@ class InteractiveToolExecutor:
         self.websocket = websocket
         self.conversation_id = conversation_id
         self.agent = agent
-        self.credentials = credentials
+        self.tool_slot_bindings = tool_slot_bindings
+        self.credential_pool = credential_pool
         self.incoming = incoming
         self.trace = trace
         self.persist_message = persist_message
@@ -58,11 +62,7 @@ class InteractiveToolExecutor:
             conversation_id=self.conversation_id,
             role="assistant",
             content=content or "",
-            tool_calls=[
-                block
-                for block in assistant_content
-                if block.get("type") == "tool_use"
-            ],
+            tool_calls=[block for block in assistant_content if block.get("type") == "tool_use"],
             metadata={"hidden_from_ui": True, "message_kind": "tool_round"},
         )
 
@@ -84,7 +84,15 @@ class InteractiveToolExecutor:
 
     async def handle_tool_call(self, tc: dict, tool_policy: ToolPolicy | None) -> ToolExecutionResult:
         tool_name = tc["name"]
-        tool_args = tc["arguments"]
+
+        # Enforce the catalog server-side: a tool the agent was not granted has no policy and must
+        # not run (hiding it from the LLM specs is not enough, and a None policy bypasses approval).
+        if tool_policy is None and tool_name != "delegate_task":
+            return ToolExecutionResult(
+                output=f"Error: Tool '{tool_name}' is not available to this agent.",
+                success=False,
+                error="Tool not permitted",
+            )
 
         needs_approval = (tool_policy.requires_approval if tool_policy else False) and not self.agent.auto_approve
         use_sandbox = tool_policy.requires_sandbox if tool_policy else False
@@ -99,10 +107,27 @@ class InteractiveToolExecutor:
         if tool_name == "delegate_task":
             return await self._run_delegation(tc)
 
+        slot_credentials, missing = resolve_tool_credentials(
+            declared_slots=tool_policy.credential_slots if tool_policy else (),
+            open_credential_slots=tool_policy.open_credential_slots if tool_policy else False,
+            slot_bindings=self.tool_slot_bindings.get(tool_name, {}),
+            credential_pool=self.credential_pool,
+        )
+        if missing:
+            return ToolExecutionResult(
+                output=(
+                    f"Error: Tool '{tool_name}' is missing required credential(s): "
+                    f"{', '.join(missing)}. Bind them on the agent's tool grant."
+                ),
+                success=False,
+                error=f"Unbound credential slots: {', '.join(missing)}",
+            )
+
         return await self._execute_standard_tool(
             tc,
             use_sandbox=use_sandbox,
             allow_network=self.agent.auto_approve or approved_via_hitl,
+            slot_credentials=slot_credentials,
         )
 
     async def _request_tool_approval(self, tc: dict) -> ToolExecutionResult | None:
@@ -114,13 +139,15 @@ class InteractiveToolExecutor:
             conversation_id=str(self.conversation_id),
         )
 
-        await self.websocket.send_json({
-            "type": "approval_request",
-            "approval_id": pending.id,
-            "tool_name": tool_name,
-            "arguments": tool_args,
-            "tool_call_id": tc["id"],
-        })
+        await self.websocket.send_json(
+            {
+                "type": "approval_request",
+                "approval_id": pending.id,
+                "tool_name": tool_name,
+                "arguments": tool_args,
+                "tool_call_id": tc["id"],
+            }
+        )
 
         async def drain_approvals() -> None:
             while not pending.event.is_set():
@@ -149,15 +176,17 @@ class InteractiveToolExecutor:
             return None
 
         reject_reason = pending.reject_reason or "User rejected"
-        await self.websocket.send_json({
-            "type": "tool_call_result",
-            "tool_name": tool_name,
-            "tool_call_id": tc["id"],
-            "success": False,
-            "output": "",
-            "error": f"Rejected: {reject_reason}",
-            "duration_ms": 0,
-        })
+        await self.websocket.send_json(
+            {
+                "type": "tool_call_result",
+                "tool_name": tool_name,
+                "tool_call_id": tc["id"],
+                "success": False,
+                "output": "",
+                "error": f"Rejected: {reject_reason}",
+                "duration_ms": 0,
+            }
+        )
         return ToolExecutionResult(
             output=f"Error: Tool execution was rejected by the user. Reason: {reject_reason}",
             success=False,
@@ -169,24 +198,28 @@ class InteractiveToolExecutor:
         agent_name = tool_args.get("agent_name", "")
         task_desc = tool_args.get("task", "")
 
-        await self.websocket.send_json({
-            "type": "delegation_start",
-            "agent_name": agent_name,
-            "task": task_desc[:500],
-            "tool_call_id": tc["id"],
-        })
+        await self.websocket.send_json(
+            {
+                "type": "delegation_start",
+                "agent_name": agent_name,
+                "task": task_desc[:500],
+                "tool_call_id": tc["id"],
+            }
+        )
 
         await set_agent_state(str(self.agent.id), STATE_DELEGATING, {"delegated_to": agent_name})
 
         sub_agent = await get_agent_by_name(agent_name)
         if not sub_agent:
-            await self.websocket.send_json({
-                "type": "delegation_complete",
-                "agent_name": agent_name,
-                "tool_call_id": tc["id"],
-                "success": False,
-                "content": f"Agent '{agent_name}' not found.",
-            })
+            await self.websocket.send_json(
+                {
+                    "type": "delegation_complete",
+                    "agent_name": agent_name,
+                    "tool_call_id": tc["id"],
+                    "success": False,
+                    "content": f"Agent '{agent_name}' not found.",
+                }
+            )
             await set_agent_state(str(self.agent.id), STATE_THINKING)
             return ToolExecutionResult(
                 output=f"Error: Agent '{agent_name}' not found. Available agents can be listed.",
@@ -194,7 +227,9 @@ class InteractiveToolExecutor:
                 error=f"Agent '{agent_name}' not found.",
             )
 
-        async with self.trace.step("delegation", step_name=f"delegate:{agent_name}", input_data={"task": task_desc[:500]}) as step:
+        async with self.trace.step(
+            "delegation", step_name=f"delegate:{agent_name}", input_data={"task": task_desc[:500]}
+        ) as step:
             delegation_result = await run_sub_agent(
                 agent=sub_agent,
                 task=task_desc,
@@ -209,15 +244,17 @@ class InteractiveToolExecutor:
                 "content_length": len(delegation_result.get("content", "")),
             }
 
-        await self.websocket.send_json({
-            "type": "delegation_complete",
-            "agent_name": agent_name,
-            "tool_call_id": tc["id"],
-            "success": delegation_result["success"],
-            "content": delegation_result["content"][:2000],
-            "cost_usd": delegation_result.get("cost_usd", 0),
-            "duration_ms": delegation_result.get("duration_ms", 0),
-        })
+        await self.websocket.send_json(
+            {
+                "type": "delegation_complete",
+                "agent_name": agent_name,
+                "tool_call_id": tc["id"],
+                "success": delegation_result["success"],
+                "content": delegation_result["content"][:2000],
+                "cost_usd": delegation_result.get("cost_usd", 0),
+                "duration_ms": delegation_result.get("duration_ms", 0),
+            }
+        )
 
         await set_agent_state(str(self.agent.id), STATE_THINKING)
         return ToolExecutionResult(
@@ -227,16 +264,20 @@ class InteractiveToolExecutor:
             extra_cost_usd=delegation_result.get("cost_usd", 0.0),
         )
 
-    async def _execute_standard_tool(self, tc: dict, *, use_sandbox: bool, allow_network: bool) -> ToolExecutionResult:
+    async def _execute_standard_tool(
+        self, tc: dict, *, use_sandbox: bool, allow_network: bool, slot_credentials: dict[str, str]
+    ) -> ToolExecutionResult:
         tool_name = tc["name"]
         tool_args = tc["arguments"]
 
-        await self.websocket.send_json({
-            "type": "tool_call_start",
-            "tool_name": tool_name,
-            "arguments": tool_args,
-            "tool_call_id": tc["id"],
-        })
+        await self.websocket.send_json(
+            {
+                "type": "tool_call_start",
+                "tool_name": tool_name,
+                "arguments": tool_args,
+                "tool_call_id": tc["id"],
+            }
+        )
 
         async with self.trace.step("tool_call", step_name=tool_name, input_data={"arguments": tool_args}) as step:
             result = await execute_tool(
@@ -244,22 +285,25 @@ class InteractiveToolExecutor:
                 tool_args,
                 use_sandbox=use_sandbox,
                 allow_network=allow_network,
-                credential_values=self.credentials,
+                credential_values=slot_credentials,
+                caller_agent_id=str(self.agent.id),
             )
             step.output_data = {"success": result.success, "output": result.output}
             if result.error:
                 step.error = result.error
 
-        await self.websocket.send_json({
-            "type": "tool_call_result",
-            "tool_name": tool_name,
-            "tool_call_id": tc["id"],
-            "success": result.success,
-            "output": result.output[:2000],
-            "error": result.error,
-            "duration_ms": result.metadata.get("duration_ms", 0),
-            "sandboxed": result.metadata.get("sandboxed", False),
-        })
+        await self.websocket.send_json(
+            {
+                "type": "tool_call_result",
+                "tool_name": tool_name,
+                "tool_call_id": tc["id"],
+                "success": result.success,
+                "output": result.output[:2000],
+                "error": result.error,
+                "duration_ms": result.metadata.get("duration_ms", 0),
+                "sandboxed": result.metadata.get("sandboxed", False),
+            }
+        )
         return ToolExecutionResult(
             output=result.output if result.success else f"Error: {result.error}",
             success=result.success,
@@ -275,7 +319,8 @@ async def run_chat_agent_loop(
     messages: list[dict],
     tool_specs: list[dict],
     tool_policy_by_name: dict[str, ToolPolicy],
-    credentials: dict[str, str],
+    tool_slot_bindings: dict[str, dict[str, str | list[str]]],
+    credential_pool: dict[str, PooledCredential],
     incoming: asyncio.Queue,
     persist_message: PersistMessageHook,
     system_prompt: str = "",
@@ -292,14 +337,17 @@ async def run_chat_agent_loop(
         websocket=websocket,
         conversation_id=conversation_id,
         agent=agent,
-        credentials=credentials,
+        tool_slot_bindings=tool_slot_bindings,
+        credential_pool=credential_pool,
         incoming=incoming,
         trace=trace,
         persist_message=persist_message,
     )
 
     for round_num in range(max_tool_rounds):
-        async with trace.step("llm_call", step_name=f"round_{round_num}", input_data={"message_count": len(context.messages)}) as step:
+        async with trace.step(
+            "llm_call", step_name=f"round_{round_num}", input_data={"message_count": len(context.messages)}
+        ) as step:
             response: LLMResponse = await llm_gateway.call_with_tools(
                 messages=context.messages,
                 system_prompt=system_prompt or agent.system_prompt,
@@ -315,40 +363,45 @@ async def run_chat_agent_loop(
             step.cost_usd = response.cost_usd
             step.output_data = {
                 "content": response.content or "",
-                "tool_calls": [
-                    {"name": tc["name"], "arguments": tc["arguments"]}
-                    for tc in response.tool_calls
-                ] if response.tool_calls else [],
+                "tool_calls": [{"name": tc["name"], "arguments": tc["arguments"]} for tc in response.tool_calls]
+                if response.tool_calls
+                else [],
             }
 
         context.total_input_tokens += response.input_tokens
         context.total_output_tokens += response.output_tokens
         context.total_cost_usd += response.cost_usd
-        context.steps.append({
-            "type": "llm_call",
-            "round": round_num,
-            "content": (response.content or "")[:1000],
-            "tool_calls": len(response.tool_calls) if response.tool_calls else 0,
-            "tokens": response.input_tokens + response.output_tokens,
-        })
+        context.steps.append(
+            {
+                "type": "llm_call",
+                "round": round_num,
+                "content": (response.content or "")[:1000],
+                "tool_calls": len(response.tool_calls) if response.tool_calls else 0,
+                "tokens": response.input_tokens + response.output_tokens,
+            }
+        )
 
         if not response.tool_calls:
             if response.content:
-                await websocket.send_json({
-                    "type": "assistant_chunk",
-                    "content": response.content,
-                })
+                await websocket.send_json(
+                    {
+                        "type": "assistant_chunk",
+                        "content": response.content,
+                    }
+                )
 
-            await websocket.send_json({
-                "type": "assistant_message_complete",
-                "content": response.content,
-                "model": response.model,
-                "input_tokens": context.total_input_tokens,
-                "output_tokens": context.total_output_tokens,
-                "cost_usd": context.total_cost_usd,
-                "duration_ms": response.duration_ms,
-                "trace_id": trace.trace_id,
-            })
+            await websocket.send_json(
+                {
+                    "type": "assistant_message_complete",
+                    "content": response.content,
+                    "model": response.model,
+                    "input_tokens": context.total_input_tokens,
+                    "output_tokens": context.total_output_tokens,
+                    "cost_usd": context.total_cost_usd,
+                    "duration_ms": response.duration_ms,
+                    "trace_id": trace.trace_id,
+                }
+            )
 
             await persist_message(
                 conversation_id=conversation_id,
@@ -361,14 +414,18 @@ async def run_chat_agent_loop(
             return
 
         if response.content:
-            await websocket.send_json({
-                "type": "assistant_thinking",
-                "content": response.content,
-            })
-            await websocket.send_json({
-                "type": "assistant_chunk",
-                "content": response.content,
-            })
+            await websocket.send_json(
+                {
+                    "type": "assistant_thinking",
+                    "content": response.content,
+                }
+            )
+            await websocket.send_json(
+                {
+                    "type": "assistant_chunk",
+                    "content": response.content,
+                }
+            )
 
         await process_tool_response(
             response=response,
@@ -379,7 +436,9 @@ async def run_chat_agent_loop(
             on_tool_result=tool_executor.persist_tool_result,
         )
 
-    await websocket.send_json({
-        "type": "error",
-        "message": f"Agent exceeded maximum tool rounds ({max_tool_rounds})",
-    })
+    await websocket.send_json(
+        {
+            "type": "error",
+            "message": f"Agent exceeded maximum tool rounds ({max_tool_rounds})",
+        }
+    )

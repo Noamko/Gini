@@ -1,12 +1,15 @@
 """Shared test fixtures for both unit and integration tests."""
+
 import os
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-# Point at the local Docker DB and Redis before any app code is imported
-os.environ["DATABASE_URL"] = "postgresql+asyncpg://gini:gini_dev_password@localhost:5432/gini"
-os.environ["REDIS_URL"] = "redis://localhost:6379/0"
+# Point at the local Docker DB and Redis before any app code is imported.
+# Use setdefault so a caller (e.g. an isolated test run) can override via the environment;
+# CI sets neither, so it falls back to the local Docker defaults.
+os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://gini:gini_dev_password@localhost:5432/gini")
+os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 
 @pytest.fixture
@@ -24,11 +27,13 @@ def tool_result_factory():
 # Integration fixtures
 # ---------------------------------------------------------------------------
 
+
 # Single event loop for the entire test session — required because the
 # module-level engine/redis_client singletons bind to the first loop.
 @pytest.fixture(scope="session")
 def event_loop_policy():
     import asyncio
+
     return asyncio.DefaultEventLoopPolicy()
 
 

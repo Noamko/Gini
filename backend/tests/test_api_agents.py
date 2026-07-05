@@ -14,7 +14,7 @@ async def test_create_and_get_agent(client):
     agent = resp.json()
     agent_id = agent["id"]
     assert agent["name"] == "test-agent-crud"
-    assert agent["llm_provider"] == "anthropic"
+    assert agent["llm_provider"] == "openai"
     assert agent["state"] == "idle"
     assert agent["is_active"] is True
 
