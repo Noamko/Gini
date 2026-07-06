@@ -14,6 +14,7 @@ from app.api.runs import router as runs_router
 from app.api.schedules import router as schedules_router
 from app.api.settings_api import router as settings_router
 from app.api.skills import router as skills_router
+from app.api.telegram_users import router as telegram_users_router
 from app.api.templates import router as templates_router
 from app.api.tools import router as tools_router
 from app.api.webhooks import router as webhooks_router
@@ -37,4 +38,5 @@ root_router.include_router(schedules_router)
 root_router.include_router(webhooks_router)
 root_router.include_router(workflows_router)
 root_router.include_router(templates_router)
+root_router.include_router(telegram_users_router)
 root_router.include_router(backup_router)

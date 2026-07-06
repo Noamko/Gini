@@ -9,6 +9,7 @@ from app.models.grant import agent_credentials, agent_tools
 from app.models.message import Message
 from app.models.schedule import Schedule
 from app.models.skill import Skill
+from app.models.telegram_user import TelegramUser
 from app.models.tool import Tool
 from app.models.webhook import Webhook
 from app.models.workflow import Workflow
@@ -25,6 +26,7 @@ __all__ = [
     "ExecutionLog",
     "AgentRun",
     "Schedule",
+    "TelegramUser",
     "Webhook",
     "Workflow",
     "agent_credentials",

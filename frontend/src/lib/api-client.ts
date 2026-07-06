@@ -160,6 +160,15 @@ export const api = {
     delete: (id: string) =>
       request<void>(`/api/webhooks/${id}`, { method: "DELETE" }),
   },
+  telegramUsers: {
+    list: () => request<any[]>("/api/telegram-users"),
+    create: (data: any) =>
+      request<any>("/api/telegram-users", { method: "POST", body: JSON.stringify(data) }),
+    update: (id: string, data: any) =>
+      request<any>(`/api/telegram-users/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+    delete: (id: string) =>
+      request<void>(`/api/telegram-users/${id}`, { method: "DELETE" }),
+  },
   schedules: {
     list: () => request<{ items: any[] }>("/api/schedules"),
     get: (id: string) => request<any>(`/api/schedules/${id}`),

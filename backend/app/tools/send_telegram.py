@@ -1,9 +1,15 @@
 from typing import Any
 
 import httpx
+import structlog
+from sqlalchemy import select
 
 from app.config import settings
+from app.dependencies import async_session
+from app.models.telegram_user import TelegramUser
 from app.tools.base import BaseTool, CredentialSlot, ToolResult
+
+logger = structlog.get_logger("tools.send_telegram")
 
 # Slot holding the default Telegram chat(s) to send to when the caller omits a numeric one.
 # It is a ``multi`` slot: bind one or more chat credentials and every message fans out to all of them.
@@ -29,6 +35,35 @@ def _resolve_chat_ids(chat_id: str | None, credential_values: dict[str, Any] | N
     return [v for v in (str(b).strip() for b in values) if v]
 
 
+async def _refused_recipients(targets: list[str]) -> dict[str, str]:
+    """Map target → failure reason for recipients registered in telegram_users but not permitted.
+
+    A target is refused when its row exists and (status != "active" or can_receive is off).
+    Unregistered ids stay allowed: admin-bound credentials imply consent, and groups/channels
+    are typically unregistered. One query covers all targets; a DB failure logs and allows
+    (fails open) so delivery keeps working.
+    """
+    numeric: dict[int, str] = {}
+    for target in targets:
+        stripped = target.strip()
+        if stripped.lstrip("-").isdigit():
+            numeric[int(stripped)] = target
+    if not numeric:
+        return {}
+    try:
+        async with async_session() as db:
+            result = await db.execute(select(TelegramUser).where(TelegramUser.telegram_id.in_(numeric)))
+            rows = result.scalars().all()
+    except Exception as e:
+        await logger.awarning("telegram_recipient_check_failed", error=str(e))
+        return {}
+    return {
+        numeric[row.telegram_id]: f"recipient {numeric[row.telegram_id]} not permitted"
+        for row in rows
+        if row.status != "active" or not row.can_receive
+    }
+
+
 async def _broadcast(*, token: str, targets: list[str], path: str, payload_for, timeout: float, summary) -> ToolResult:
     """POST ``path`` once per target with ``payload_for(chat_id)``; aggregate the results.
 
@@ -37,8 +72,12 @@ async def _broadcast(*, token: str, targets: list[str], path: str, payload_for, 
     """
     successes: list[tuple[str, dict]] = []
     failures: list[tuple[str, str]] = []
+    refused = await _refused_recipients(targets)
     async with httpx.AsyncClient(timeout=timeout) as client:
         for cid in targets:
+            if cid in refused:
+                failures.append((cid, refused[cid]))
+                continue
             try:
                 resp = await client.post(f"https://api.telegram.org/bot{token}/{path}", json=payload_for(cid))
                 data = resp.json()
