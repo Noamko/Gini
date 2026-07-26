@@ -279,6 +279,7 @@ export default function SettingsPage() {
                       <option value="token">Token</option>
                       <option value="password">Password</option>
                       <option value="oauth">OAuth</option>
+                      <option value="facebook_session">Facebook Session</option>
                       <option value="other">Other</option>
                     </select>
                   </div>

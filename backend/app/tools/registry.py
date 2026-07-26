@@ -7,6 +7,7 @@ from app.tools.create_webhook import CreateWebhookTool
 from app.tools.create_workflow import CreateWorkflowTool
 from app.tools.delegate_task import DelegateTaskTool
 from app.tools.email_tools import ReadEmailIMAPTool, SendEmailSMTPTool
+from app.tools.facebook_marketplace import FacebookMarketplaceListingTool, FacebookMarketplaceSearchTool
 from app.tools.list_agents import ListAgentsTool
 from app.tools.read_file import ReadFileTool
 from app.tools.run_shell import RunShellTool
@@ -32,6 +33,9 @@ BUILTIN_TOOLS: list[BaseTool] = [
     CreateWorkflowTool(),
     CreateWebhookTool(),
     CreateToolTool(),
+    # Facebook Marketplace — opt-in via the "Facebook Marketplace" skill.
+    FacebookMarketplaceSearchTool(),
+    FacebookMarketplaceListingTool(),
 ]
 
 _tools_by_name: dict[str, BaseTool] = {t.name: t for t in BUILTIN_TOOLS}
