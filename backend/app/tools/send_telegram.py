@@ -22,17 +22,27 @@ _TELEGRAM_CHAT_SLOT = CredentialSlot(
 )
 
 
-def _resolve_chat_ids(chat_id: str | None, credential_values: dict[str, Any] | None) -> list[str]:
-    """Resolve the target chats: an explicit numeric literal if given, else every bound ``chat_id`` slot."""
+def _resolve_chat_ids(chat_id: str | None, credential_values: dict[str, Any] | None) -> tuple[list[str], str | None]:
+    """Resolve the target chats; returns ``(targets, error)``.
+
+    An explicit ``chat_id`` must be a numeric Telegram id — anything else is an error, never a
+    silent fallback to the bound chats (that would deliver to the wrong recipients). With no
+    ``chat_id``, every bound ``chat_id`` slot value is targeted.
+    """
     if chat_id:
         stripped = str(chat_id).strip()
         if stripped.lstrip("-").isdigit():
-            return [stripped]
+            return [stripped], None
+        return [], (
+            f"chat_id '{chat_id}' is not a numeric Telegram chat ID. "
+            "Omit chat_id entirely to send to the chat(s) bound to this tool."
+        )
     bound = (credential_values or {}).get("chat_id")
-    if bound is None:
-        return []
-    values = bound if isinstance(bound, list) else [bound]
-    return [v for v in (str(b).strip() for b in values) if v]
+    values = bound if isinstance(bound, list) else [bound] if bound is not None else []
+    targets = [v for v in (str(b).strip() for b in values) if v]
+    if not targets:
+        return [], "No chat_id given and no chat credential is bound to this tool."
+    return targets, None
 
 
 async def _refused_recipients(targets: list[str]) -> dict[str, str]:
@@ -131,12 +141,9 @@ class SendTelegramTool(BaseTool):
         if not token or token == "your-telegram-bot-token-here":
             return ToolResult(success=False, error="Telegram bot token not configured")
 
-        targets = _resolve_chat_ids(chat_id, credential_values)
-        if not targets:
-            return ToolResult(
-                success=False,
-                error=f"Could not resolve chat_id '{chat_id}' — not numeric and no chat credential bound.",
-            )
+        targets, resolve_error = _resolve_chat_ids(chat_id, credential_values)
+        if resolve_error:
+            return ToolResult(success=False, error=resolve_error)
 
         return await _broadcast(
             token=token,
@@ -183,12 +190,9 @@ class SendTelegramPhotoTool(BaseTool):
         if not token or token == "your-telegram-bot-token-here":
             return ToolResult(success=False, error="Telegram bot token not configured")
 
-        targets = _resolve_chat_ids(chat_id, credential_values)
-        if not targets:
-            return ToolResult(
-                success=False,
-                error=f"Could not resolve chat_id '{chat_id}' — not numeric and no chat credential bound.",
-            )
+        targets, resolve_error = _resolve_chat_ids(chat_id, credential_values)
+        if resolve_error:
+            return ToolResult(success=False, error=resolve_error)
 
         def payload_for(cid: str) -> dict:
             payload: dict = {"chat_id": cid, "photo": photo_url}
@@ -246,12 +250,9 @@ class SendTelegramMediaGroupTool(BaseTool):
         if not photo_urls:
             return ToolResult(success=False, error="No photo URLs provided")
 
-        targets = _resolve_chat_ids(chat_id, credential_values)
-        if not targets:
-            return ToolResult(
-                success=False,
-                error=f"Could not resolve chat_id '{chat_id}' — not numeric and no chat credential bound.",
-            )
+        targets, resolve_error = _resolve_chat_ids(chat_id, credential_values)
+        if resolve_error:
+            return ToolResult(success=False, error=resolve_error)
 
         urls = photo_urls[:10]
         media = []
