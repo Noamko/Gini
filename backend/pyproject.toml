@@ -20,6 +20,9 @@ dependencies = [
     "croniter>=2.0.0",
     "python-multipart>=0.0.9",
     "playwright>=1.40.0",
+    # Playwright fork that keeps CDP quiet (no Runtime.enable leak) — required by yad2_search
+    # to clear Radware Bot Manager. Ships its own browser build; see Dockerfile.
+    "patchright>=1.52.0",
     "beautifulsoup4>=4.12.0",
     "lxml>=5.0.0",
 ]

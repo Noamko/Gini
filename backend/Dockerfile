@@ -27,6 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2t64 libwayland-client0 \
     && rm -rf /var/lib/apt/lists/*
 RUN uv run playwright install chromium
+# patchright resolves browsers against its own pinned revision, so it needs its own download.
+RUN uv run patchright install chromium
 
 EXPOSE 8000
 
