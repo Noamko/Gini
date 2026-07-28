@@ -43,6 +43,17 @@ async def test_search_without_session_returns_error():
 
 
 @pytest.mark.asyncio
+async def test_general_search_requires_query():
+    tool = FacebookMarketplaceSearchTool()
+    result = await tool.execute(
+        category="all",
+        credential_values={"facebook_session": "c_user=1; xs=2"},
+    )
+    assert result.success is False
+    assert "query" in (result.error or "").lower()
+
+
+@pytest.mark.asyncio
 async def test_search_rejects_session_without_c_user():
     tool = FacebookMarketplaceSearchTool()
     result = await tool.execute(

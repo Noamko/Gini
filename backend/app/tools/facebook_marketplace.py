@@ -94,13 +94,15 @@ _EXTRACT_JS = r"""(limit) => {
         seen.add(id);
 
         const text = (a.innerText || '').split('\n').map(s => s.trim()).filter(Boolean);
+        // Badge/label lines Facebook renders on cards that are not the real title.
+        const isBadge = (s) => /^(just listed|new|sponsored|featured)$/i.test(s);
         // Price is the line containing a currency symbol or 'Free'.
         let price = '';
         let title = '';
         let location = '';
         for (const line of text) {
             if (!price && (/[$£€₪]|\bfree\b/i.test(line))) { price = line; continue; }
-            if (!title && line.length > 3 && !/^[$£€₪]/.test(line)) { title = line; continue; }
+            if (!title && line.length > 3 && !/^[$£€₪]/.test(line) && !isBadge(line)) { title = line; continue; }
         }
         // Last text line is usually the location.
         if (text.length) location = text[text.length - 1];
@@ -166,9 +168,9 @@ async def _run_browser(url: str, cookies: list[dict], extractor, extractor_arg, 
 class FacebookMarketplaceSearchTool(BaseTool):
     name = "facebook_marketplace_search"
     description = (
-        "Search Facebook Marketplace for listings by keyword. Returns structured results "
-        "(title, price, location, image, listing URL). Requires a Facebook session credential; "
-        "read-only (does not post or message)."
+        "Search Facebook Marketplace for listings by keyword, or browse the Property Rentals "
+        "category for apartments. Returns structured results (title, price, location, image, "
+        "listing URL). Requires a Facebook session credential; read-only (does not post or message)."
     )
     default_catalog = False  # opt-in; granted via the Facebook Marketplace skill
     credential_slots = [_FB_SESSION_SLOT]
@@ -177,17 +179,33 @@ class FacebookMarketplaceSearchTool(BaseTool):
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Search keywords, e.g. 'ikea desk' or 'road bike 54cm'.",
+                "description": (
+                    "Search keywords, e.g. 'ikea desk'. Optional when category='property_rentals' "
+                    "(the category can be browsed without a keyword); required otherwise."
+                ),
+            },
+            "category": {
+                "type": "string",
+                "enum": ["all", "property_rentals"],
+                "description": (
+                    "'all' = general keyword search (default). 'property_rentals' = the apartment "
+                    "rentals category, where price filters apply to monthly rent."
+                ),
+                "default": "all",
             },
             "location": {
                 "type": "string",
                 "description": (
-                    "City to search, e.g. 'seattle' or 'new york'. Optional — if omitted, "
+                    "City to search, e.g. 'tel aviv' or 'seattle'. Optional — if omitted, "
                     "Facebook uses the logged-in account's default Marketplace location."
                 ),
             },
-            "min_price": {"type": "integer", "description": "Minimum price filter."},
-            "max_price": {"type": "integer", "description": "Maximum price filter."},
+            "min_price": {"type": "integer", "description": "Minimum price filter (monthly rent for rentals)."},
+            "max_price": {"type": "integer", "description": "Maximum price filter (monthly rent for rentals)."},
+            "min_bedrooms": {
+                "type": "integer",
+                "description": "Minimum bedrooms (property_rentals only). Note: Facebook counts bedrooms, not Israeli 'rooms'.",
+            },
             "sort_by": {
                 "type": "string",
                 "enum": ["best_match", "price_ascend", "price_descend", "distance_ascend", "creation_time_descend"],
@@ -204,15 +222,17 @@ class FacebookMarketplaceSearchTool(BaseTool):
                 "default": 10,
             },
         },
-        "required": ["query"],
+        "required": [],
     }
 
     async def execute(
         self,
-        query: str,
+        query: str | None = None,
+        category: str = "all",
         location: str | None = None,
         min_price: int | None = None,
         max_price: int | None = None,
+        min_bedrooms: int | None = None,
         sort_by: str | None = None,
         days_since_listed: int | None = None,
         limit: int = 10,
@@ -229,23 +249,42 @@ class FacebookMarketplaceSearchTool(BaseTool):
                 ),
             )
 
+        is_rentals = category == "property_rentals"
+        if not query and not is_rentals:
+            return ToolResult(success=False, error="A 'query' is required for a general search (category='all').")
+
         limit = min(max(limit, 1), 30)
 
         base = "https://www.facebook.com/marketplace"
-        path = f"{base}/{_slugify_location(location)}/search" if location else f"{base}/search"
-        params = [f"query={query.replace(' ', '%20')}"]
+        slug = _slugify_location(location) if location else None
+        endpoint = "propertyrentals" if is_rentals else "search"
+        # The rentals category needs the /category/ prefix when no location slug is given.
+        if slug:
+            path = f"{base}/{slug}/{endpoint}"
+        elif is_rentals:
+            path = f"{base}/category/{endpoint}"
+        else:
+            path = f"{base}/{endpoint}"
+
+        params: list[str] = []
+        if query:
+            params.append(f"query={query.replace(' ', '%20')}")
         if min_price is not None:
             params.append(f"minPrice={min_price}")
         if max_price is not None:
             params.append(f"maxPrice={max_price}")
+        if is_rentals and min_bedrooms is not None:
+            params.append(f"bedrooms={min_bedrooms}")
         if sort_by:
             params.append(f"sortBy={sort_by}")
         if days_since_listed:
             params.append(f"daysSinceListed={days_since_listed}")
-        url = f"{path}?{'&'.join(params)}"
+        url = f"{path}?{'&'.join(params)}" if params else path
 
         try:
-            await logger.ainfo("fb_marketplace_search_start", query=query, location=location, url=url)
+            await logger.ainfo(
+                "fb_marketplace_search_start", query=query, category=category, location=location, url=url
+            )
             result = await _run_browser(url, cookies, _EXTRACT_JS, limit, scroll=True)
         except Exception as e:
             await logger.aerror("fb_marketplace_search_error", error=str(e))
