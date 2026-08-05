@@ -1,8 +1,9 @@
 """Seed a dedicated "Marketplace Scout" agent and grant it the Facebook Marketplace skill.
 
-A focused, non-main agent so Marketplace browsing runs off Gini. The skill bundles the two
-read-only tools (facebook_marketplace_search, facebook_marketplace_listing) and the
-facebook_session credential, which auto-binds to the tools' session slot.
+A focused, non-main agent so Marketplace browsing runs off Gini. The skill bundles the
+read-only tools (facebook_marketplace_search, facebook_marketplace_listing,
+facebook_group_list, facebook_group_posts) and the facebook_session credential, which
+auto-binds to the tools' session slot.
 
 Run AFTER seed_facebook_marketplace_skill.py (the skill must exist first). Idempotent.
 """
@@ -28,7 +29,14 @@ items by keyword — apply the location, price, recency, and sort filters that m
 asked for. Use facebook_marketplace_listing to pull the full detail (description, all photos, price) \
 of a specific item when the user wants a closer look or a comparison.
 
-These tools are read-only: you can search and read, but you never post listings, message sellers, \
+You can also scan the Facebook groups the account has joined — many are local rental/for-sale \
+groups where the best finds never reach Marketplace. Use facebook_group_list to enumerate joined \
+groups (filter by a name keyword, including Hebrew terms), then facebook_group_posts to pull the \
+newest posts from up to 10 groups per call. Group posts are free-form text: judge relevance \
+yourself from the post body (price, rooms, neighborhood — often in Hebrew) and always include the \
+post link when you surface one.
+
+These tools are read-only: you can search and read, but you never post, comment, message sellers, \
 or change anything on the account. If a search omits a location, Facebook uses the account's default \
 Marketplace area — pass an explicit location when the user names a city.
 

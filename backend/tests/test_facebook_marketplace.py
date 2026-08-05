@@ -3,8 +3,13 @@
 import pytest
 
 from app.tools.facebook_marketplace import (
+    FacebookGroupListTool,
+    FacebookGroupPostsTool,
     FacebookMarketplaceListingTool,
     FacebookMarketplaceSearchTool,
+    _group_segment,
+    _harvest_stories,
+    _location_path_segment,
     _parse_cookie_string,
     _session_cookies,
     _slugify_location,
@@ -32,6 +37,15 @@ def test_session_cookies_unwraps_multi_value_and_handles_missing():
 def test_slugify_location():
     assert _slugify_location("New York") == "newyork"
     assert _slugify_location("San Francisco!") == "sanfrancisco"
+
+
+def test_location_path_segment():
+    # Cities with a vanity slug pass through slugified.
+    assert _location_path_segment("Tel Aviv") == "telaviv"
+    # Cities without a vanity slug map to their numeric Marketplace location id.
+    assert _location_path_segment("Haifa") == "110619208966868"
+    # A numeric location id is used as-is.
+    assert _location_path_segment("108140382539956") == "108140382539956"
 
 
 @pytest.mark.asyncio
@@ -75,8 +89,85 @@ async def test_listing_requires_valid_id():
     assert "listing id" in (result.error or "").lower()
 
 
+def test_group_segment():
+    # Full URLs (with or without trailing path/query) resolve to the path segment.
+    assert _group_segment("https://www.facebook.com/groups/123456789/") == "123456789"
+    assert _group_segment("https://www.facebook.com/groups/telavivrentals?ref=share") == "telavivrentals"
+    # Bare ids and vanity slugs pass through.
+    assert _group_segment("123456789") == "123456789"
+    assert _group_segment("telaviv.rentals") == "telaviv.rentals"
+    # Free-text group names (spaces/Hebrew) don't resolve — the caller must use facebook_group_list.
+    assert _group_segment("דירות להשכרה בתל אביב") is None
+    assert _group_segment("Tel Aviv Rentals") is None
+
+
+@pytest.mark.asyncio
+async def test_group_tools_without_session_return_error():
+    list_result = await FacebookGroupListTool().execute(credential_values={})
+    posts_result = await FacebookGroupPostsTool().execute(groups=["123"], credential_values={})
+    for result in (list_result, posts_result):
+        assert result.success is False
+        assert "session" in (result.error or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_group_posts_validates_groups():
+    tool = FacebookGroupPostsTool()
+    creds = {"facebook_session": "c_user=1; xs=2"}
+
+    result = await tool.execute(groups=[], credential_values=creds)
+    assert result.success is False
+    assert "at least one" in (result.error or "").lower()
+
+    result = await tool.execute(groups=[str(i) for i in range(11)], credential_values=creds)
+    assert result.success is False
+    assert "at most 10" in (result.error or "")
+
+    result = await tool.execute(groups=["not a valid group!"], credential_values=creds)
+    assert result.success is False
+    assert "group id" in (result.error or "").lower()
+
+
+def test_harvest_stories_extracts_post_fields_from_graphql_payload():
+    payload = {
+        "data": {
+            "node": {
+                "post_id": "321",
+                "comet_sections": {
+                    "content": {
+                        "story": {
+                            "message": {"text": "דירת 3 חדרים להשכרה", "ranges": []},
+                            "wwwURL": "https://www.facebook.com/groups/g/permalink/321/",
+                            "creation_time": 1785588165,
+                            "actors": [{"__typename": "User", "name": "Jane Doe"}],
+                            "attachments": [{"media": {"image": {"uri": "https://scontent.example/img.jpg"}}}],
+                        }
+                    }
+                },
+            },
+            # An object with post_id but no comet_sections is metadata, not a story.
+            "other": {"post_id": "999"},
+        }
+    }
+    stories: list[dict] = []
+    _harvest_stories(payload, stories)
+    assert len(stories) == 1
+    story = stories[0]
+    assert story["post_id"] == "321"
+    assert story["text"] == "דירת 3 חדרים להשכרה"
+    assert story["url"].endswith("/321/")
+    assert story["created_at"] == 1785588165
+    assert story["author"] == "Jane Doe"
+    assert story["image_url"] == "https://scontent.example/img.jpg"
+
+
 def test_tools_are_optin_and_declare_session_slot():
-    for tool in (FacebookMarketplaceSearchTool(), FacebookMarketplaceListingTool()):
+    for tool in (
+        FacebookMarketplaceSearchTool(),
+        FacebookMarketplaceListingTool(),
+        FacebookGroupListTool(),
+        FacebookGroupPostsTool(),
+    ):
         assert tool.default_catalog is False
         slots = {s.name: s for s in tool.credential_slots}
         assert "facebook_session" in slots

@@ -25,18 +25,27 @@ from app.services.skill_executor import invalidate_prompt_cache
 
 SKILL_NAME = "Facebook Marketplace"
 SKILL_DESCRIPTION = (
-    "Search and read Facebook Marketplace listings using the operator's Facebook session. "
-    "Read-only: it never posts, messages, or changes account state."
+    "Search and read Facebook Marketplace listings and Facebook group posts using the operator's "
+    "Facebook session. Read-only: it never posts, messages, or changes account state."
 )
 SKILL_INSTRUCTIONS = (
-    "You can browse Facebook Marketplace. Use facebook_marketplace_search to find listings by "
-    "keyword (optionally filtering by location, price, recency, and sort order), and "
-    "facebook_marketplace_listing to fetch the full detail of a single item by id or URL. "
-    "These tools require a valid Facebook session credential; if a call reports a login wall, tell "
-    "the user their facebook_session cookies need refreshing. Never attempt to post listings or "
-    "message sellers — these tools are read-only."
+    "You can browse Facebook Marketplace and the Facebook groups the operator's account has joined. "
+    "Use facebook_marketplace_search to find listings by keyword (optionally filtering by location, "
+    "price, recency, and sort order), and facebook_marketplace_listing to fetch the full detail of a "
+    "single item by id or URL. For groups: facebook_group_list enumerates the account's joined groups "
+    "(filter by a name keyword, e.g. 'tel aviv' or a Hebrew term) and facebook_group_posts fetches the "
+    "newest posts from up to 10 groups per call — scan groups in batches, then judge relevance from the "
+    "post text yourself (group posts are free-form; prices, room counts, and neighborhoods appear in "
+    "the text, often in Hebrew). These tools require a valid Facebook session credential; if a call "
+    "reports a login wall, tell the user their facebook_session cookies need refreshing. Never attempt "
+    "to post, comment, or message — these tools are read-only."
 )
-TOOL_NAMES = ["facebook_marketplace_search", "facebook_marketplace_listing"]
+TOOL_NAMES = [
+    "facebook_marketplace_search",
+    "facebook_marketplace_listing",
+    "facebook_group_list",
+    "facebook_group_posts",
+]
 CREDENTIAL_NAME = "facebook_session"
 
 
